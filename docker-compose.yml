@@ -1,0 +1,63 @@
+services:
+  repairshop:
+    image: fam1152/repairshop:latest
+    container_name: repairshop
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "3443:3443"
+    volumes:
+      - /mnt/tank/repairshop-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - DB_PATH=/data/repairshop.sqlite
+      - UPLOADS_PATH=/data/uploads
+      - JWT_SECRET=change_me_to_something_long_and_random_before_deploying
+      - GOOGLE_CLIENT_ID=
+      - GOOGLE_CLIENT_SECRET=
+      - GOOGLE_REDIRECT_URI=http://YOUR-TRUENAS-IP:3000/api/appointments/google/callback
+      - DOCKER_IMAGE=fam1152/repairshop:latest
+      # HTTPS / SSL — enables camera on LAN devices
+      # Generate cert: see README for openssl command
+      - SSL_CERT=/data/ssl/cert.pem
+      - SSL_KEY=/data/ssl/key.pem
+      - HTTPS_PORT=3443
+      # Ollama AI — points to the ollama container on the internal network
+      - OLLAMA_URL=http://ollama:11434
+      - OLLAMA_MODEL=llama3.2
+    depends_on:
+      - ollama
+    networks:
+      - repairshop-net
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/auth/me"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      # Ollama models stored on TrueNAS — persists across container restarts
+      - /mnt/tank/ollama-models:/root/.ollama
+    networks:
+      - repairshop-net
+    # Uncomment the next 3 lines if your TrueNAS box has an NVIDIA GPU:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+networks:
+  repairshop-net:
+    driver: bridge

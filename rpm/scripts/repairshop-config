@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# repairshop-config
+# Syncs /etc/repairshop/repairshop.conf → /etc/sysconfig/repairshop
+# and optionally restarts the service.
+#
+# Usage:
+#   sudo repairshop-config sync     — sync config and restart
+#   sudo repairshop-config status   — show current config
+#   sudo repairshop-config genkey   — generate a new JWT secret
+
+set -euo pipefail
+CONF=/etc/repairshop/repairshop.conf
+SYSCONF=/etc/sysconfig/repairshop
+
+if [ "$EUID" -ne 0 ]; then
+    echo "Run as root: sudo $0 $*"
+    exit 1
+fi
+
+CMD="${1:-help}"
+
+case "$CMD" in
+    sync)
+        echo "Syncing $CONF → $SYSCONF"
+        # Copy all KEY=VALUE lines, skip comments and blank lines
+        grep -E '^[A-Z_]+=.*$' "$CONF" > "$SYSCONF.tmp"
+        mv "$SYSCONF.tmp" "$SYSCONF"
+        chmod 640 "$SYSCONF"
+        chown root:repairshop "$SYSCONF"
+        echo "Done. Restarting repairshop…"
+        systemctl daemon-reload
+        systemctl restart repairshop
+        systemctl status repairshop --no-pager -l
+        ;;
+    status)
+        echo "=== /etc/repairshop/repairshop.conf ==="
+        grep -v '^#' "$CONF" | grep -v '^$' | while IFS= read -r line; do
+            KEY=$(echo "$line" | cut -d= -f1)
+            if echo "$KEY" | grep -qi "secret\|password\|key"; then
+                echo "$KEY=***"
+            else
+                echo "$line"
+            fi
+        done
+        echo ""
+        echo "=== Service status ==="
+        systemctl status repairshop --no-pager -l
+        ;;
+    genkey)
+        SECRET=$(openssl rand -hex 64)
+        echo "Generated JWT secret:"
+        echo ""
+        echo "  $SECRET"
+        echo ""
+        echo "Add this to /etc/repairshop/repairshop.conf:"
+        echo "  JWT_SECRET=$SECRET"
+        echo ""
+        echo "Then run: sudo repairshop-config sync"
+        ;;
+    help|*)
+        echo "Usage: sudo repairshop-config <command>"
+        echo ""
+        echo "Commands:"
+        echo "  sync     Sync config file to sysconfig and restart service"
+        echo "  status   Show current configuration and service status"
+        echo "  genkey   Generate a secure JWT_SECRET"
+        ;;
+esac

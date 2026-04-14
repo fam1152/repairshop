@@ -1,0 +1,39 @@
+[Unit]
+Description=RepairShop IT Management System
+Documentation=https://github.com/fam1152/repairshop
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=repairshop
+Group=repairshop
+WorkingDirectory=/opt/repairshop
+ExecStart=/usr/bin/node /opt/repairshop/server/index.js
+
+# Load environment from sysconfig
+EnvironmentFile=/etc/sysconfig/repairshop
+
+# Restart on failure
+Restart=on-failure
+RestartSec=5s
+StartLimitBurst=5
+StartLimitIntervalSec=60s
+
+# Resource limits
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/repairshop /var/log/repairshop
+
+# Logging to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=repairshop
+
+[Install]
+WantedBy=multi-user.target
