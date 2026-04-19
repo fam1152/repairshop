@@ -1,14 +1,25 @@
 Name:           repairshop
-Version:        10.0
+Version:        11.0.0
 Release:        1%{?dist}
 Summary:        IT Repair Shop Management System
 License:        Proprietary
 URL:            https://github.com/fam1152/repairshop
 Source0:        repairshop-%{version}.tar.gz
 
-# Runtime requirements
+# Disable automatic dependency generation
+# Node.js node_modules contain many files that confuse the RPM generator
+AutoReqProv:    no
+
+# Runtime requirements (manually specified since AutoReq is off)
 Requires:       nodejs >= 20
 Requires:       npm >= 10
+Requires:       openssl
+Requires:       xdg-utils
+Requires:       zenity
+Requires:       python3
+Requires:       python3-pystray
+Requires:       python3-psutil
+Requires:       python3-pillow
 Requires(pre):  shadow-utils
 Requires(post): systemd
 Requires(preun): systemd
@@ -53,15 +64,16 @@ install -d %{buildroot}/var/lib/repairshop
 install -d %{buildroot}/var/lib/repairshop/uploads
 install -d %{buildroot}/var/lib/repairshop/uploads/avatars
 install -d %{buildroot}/var/lib/repairshop/uploads/photos
+install -d %{buildroot}/var/lib/repairshop/uploads/knowledge-base
 install -d %{buildroot}/var/log/repairshop
 install -d %{buildroot}/etc/repairshop
 install -d %{buildroot}%{_unitdir}
 install -d %{buildroot}%{_sysconfdir}/sysconfig
 
 # Copy application files
-cp -r server/          %{buildroot}/opt/repairshop/server/
-cp -r node_modules/    %{buildroot}/opt/repairshop/node_modules/
-cp -r client/build/    %{buildroot}/opt/repairshop/client/build/
+cp -r server/*          %{buildroot}/opt/repairshop/server/
+cp -r node_modules/*    %{buildroot}/opt/repairshop/node_modules/
+cp -r client/build/*    %{buildroot}/opt/repairshop/client/build/
 install -m 0644 package.json   %{buildroot}/opt/repairshop/package.json
 install -m 0644 LICENSE        %{buildroot}/opt/repairshop/LICENSE
 
@@ -73,6 +85,26 @@ install -m 0640 rpm/config/repairshop.sysconfig %{buildroot}%{_sysconfdir}/sysco
 
 # Systemd service
 install -m 0644 rpm/systemd/repairshop.service %{buildroot}%{_unitdir}/repairshop.service
+
+# Helper script
+install -d %{buildroot}%{_bindir}
+install -m 0755 rpm/scripts/repairshop-config %{buildroot}%{_bindir}/repairshop-config
+install -m 0755 rpm/scripts/repairshop-launcher.sh %{buildroot}%{_bindir}/repairshop-launcher.sh
+install -m 0755 rpm/scripts/repairshop-uninstall-backup %{buildroot}%{_bindir}/repairshop-uninstall-backup
+install -m 0755 rpm/scripts/repairshop-tray.py %{buildroot}%{_bindir}/repairshop-tray
+
+# Desktop entry and Icon
+install -d %{buildroot}%{_datadir}/applications
+install -m 0644 rpm/repairshop.desktop %{buildroot}%{_datadir}/applications/repairshop.desktop
+install -d %{buildroot}/etc/xdg/autostart
+install -m 0644 rpm/repairshop-tray.desktop %{buildroot}/etc/xdg/autostart/repairshop-tray.desktop
+
+install -d %{buildroot}%{_datadir}/icons/hicolor/scalable/apps
+install -m 0644 rpm/repairshop.svg %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/repairshop.svg
+
+# Firewalld service
+install -d %{buildroot}%{_prefix}/lib/firewalld/services
+install -m 0644 rpm/firewalld/repairshop.xml %{buildroot}%{_prefix}/lib/firewalld/services/repairshop.xml
 
 %pre
 # Create repairshop system user if it doesn't exist
@@ -86,6 +118,14 @@ exit 0
 # Reload systemd and enable service
 %systemd_post repairshop.service
 systemctl daemon-reload >/dev/null 2>&1 || true
+
+# Firewall configuration
+if command -v firewall-cmd >/dev/null 2>&1; then
+    if systemctl is-active --quiet firewalld; then
+        firewall-cmd --permanent --add-service=repairshop >/dev/null 2>&1 || true
+        firewall-cmd --reload >/dev/null 2>&1 || true
+    fi
+fi
 
 # Generate SSL cert if it doesn't exist
 SSL_DIR=/var/lib/repairshop/ssl
@@ -111,7 +151,7 @@ chmod 750 /etc/repairshop
 
 echo ""
 echo "╔══════════════════════════════════════════════════════╗"
-echo "║           RepairShop v9.0 installed!                 ║"
+echo "║           RepairShop v10.1.9 installed!                ║"
 echo "║                                                      ║"
 echo "║  Start:    sudo systemctl start repairshop           ║"
 echo "║  Enable:   sudo systemctl enable repairshop          ║"
@@ -119,14 +159,30 @@ echo "║  Status:   sudo systemctl status repairshop          ║"
 echo "║  Logs:     sudo journalctl -u repairshop -f          ║"
 echo "║                                                      ║"
 echo "║  HTTP:     http://localhost:3000                     ║"
-echo "║  HTTPS:    https://localhost:3443  (for camera)      ║"
+echo "║  HTTPS:    https://localhost:3443  (Self-signed)     ║"
+echo "║            Note: Accept browser security warning     ║"
+echo "║  Firewall: Service 'repairshop' allowed (3000, 3443) ║"
 echo "║  Data:     /var/lib/repairshop/                      ║"
 echo "║  Config:   /etc/repairshop/repairshop.conf           ║"
 echo "╚══════════════════════════════════════════════════════╝"
 echo ""
 
 %preun
+if [ $1 -eq 0 ]; then
+    # Emergency backup before uninstall
+    %{_bindir}/repairshop-uninstall-backup || true
+fi
 %systemd_preun repairshop.service
+
+# Remove firewall rule on uninstall
+if [ $1 -eq 0 ]; then
+    if command -v firewall-cmd >/dev/null 2>&1; then
+        if systemctl is-active --quiet firewalld; then
+            firewall-cmd --permanent --remove-service=repairshop >/dev/null 2>&1 || true
+            firewall-cmd --reload >/dev/null 2>&1 || true
+        fi
+    fi
+fi
 
 %postun
 %systemd_postun_with_restart repairshop.service
@@ -156,30 +212,42 @@ fi
 # Systemd unit
 %{_unitdir}/repairshop.service
 
+# Firewalld service
+%{_prefix}/lib/firewalld/services/repairshop.xml
+
 # Helper
 %{_bindir}/repairshop-config
+%{_bindir}/repairshop-launcher.sh
+%{_bindir}/repairshop-uninstall-backup
+%{_bindir}/repairshop-tray
+
+# Desktop and Icon
+%{_datadir}/applications/repairshop.desktop
+/etc/xdg/autostart/repairshop-tray.desktop
+%{_datadir}/icons/hicolor/scalable/apps/repairshop.svg
 
 # Data and log directories (owned by repairshop service user)
 %dir %attr(750,repairshop,repairshop) /var/lib/repairshop
 %dir %attr(750,repairshop,repairshop) /var/lib/repairshop/uploads
 %dir %attr(750,repairshop,repairshop) /var/lib/repairshop/uploads/avatars
 %dir %attr(750,repairshop,repairshop) /var/lib/repairshop/uploads/photos
+%dir %attr(750,repairshop,repairshop) /var/lib/repairshop/uploads/knowledge-base
 %dir %attr(750,repairshop,repairshop) /var/log/repairshop
 
 %changelog
-* Mon Apr 13 2026 fam1152 <fam1152> - 9.0-1
-- v9.0: Reports tab with XLS export, parts orders, HTTPS/SSL support
-- AI RAM meter, Ollama 4-state status, model controls
-- Manufacturer breakdown in inventory, Display settings tab
-- Full changelog in Updates tab, per-user dark mode
+* Sun Apr 19 2026 fam1152 <fam1152> - 11.0.0-1
+- v11.0.0: Major AI, UI, and Reliability Update
+- Fixed theme persistence issue on refresh
+- Added emergency auto-backup to Documents on uninstall
+- Updated legal disclaimers for shop liability and AI verification
+- Full AI overhaul: vision, web-search, training docs, and auto-guides
+- Added UI scaling for large monitors and TVs
 
-* Sun Apr 12 2026 fam1152 <fam1152> - 8.0-1
-- v8.0: AI assistant via Ollama — diagnosis, notes, customer messages
-- Money tab, Chat page, Dashboard clock and AI greeting
-- Troubleshooting tab, docker-compose editor, per-user settings
+* Sun Apr 19 2026 fam1152 <fam1152> - 10.1.9-1
+- v10.1.9: Added AI Playground chat box for testing training context
+- AI tools now correctly use shop name and custom system context
 
-* Sat Apr 11 2026 fam1152 <fam1152> - 7.0-1
-- v7.0: Docker update checker, staff accounts, scheduled backups
-
-* Fri Apr 10 2026 fam1152 <fam1152> - 1.0-1
-- Initial RPM release
+* Sun Apr 19 2026 fam1152 <fam1152> - 10.1.8-1
+- v10.1.8: Added graceful shutdown handlers for clean database closure
+- Improved persistent database path logic for RPM installs
+...

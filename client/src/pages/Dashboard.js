@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { StatusBadge, Spinner } from '../components/Shared';
-import { BusinessInsights, AIStatusBadge } from '../components/AIAssistant';
+import { BusinessInsights, AIStatusBadge, SpeechButton, MagicWandButton } from '../components/AIAssistant';
+import { useSettings } from '../context/SettingsContext';
 import { format } from 'date-fns';
 
 const icons = {
@@ -9,6 +10,7 @@ const icons = {
 };
 
 export default function Dashboard({ onNavigate }) {
+  const { settings } = useSettings();
   const [stats, setStats] = useState(null);
   const [reminders, setReminders] = useState([]);
   const [recentRepairs, setRecentRepairs] = useState([]);
@@ -134,14 +136,19 @@ export default function Dashboard({ onNavigate }) {
   return (
     <div className="page">
       <div className="page-header">
-        <div>
-          <h1>Dashboard</h1>
-          <p style={{ fontFamily: 'monospace', fontSize: 14, letterSpacing: '.03em' }}>
-            {clock.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' })}
-            {' · '}
-            {clock.toLocaleTimeString('en-US', { hour12: true, hour:'2-digit', minute:'2-digit', second:'2-digit' })}
-          </p>
-          {aiGreeting && <p style={{ fontSize: 15, color: 'var(--purple)', marginTop: 4, fontWeight: 500, lineHeight: 1.5 }}>🤖 {aiGreeting}</p>}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+          {settings?.logo_url && (
+            <img src={settings.logo_url} alt="Logo" style={{ height: 48, width: 48, objectFit: 'contain', borderRadius: 8 }} />
+          )}
+          <div>
+            <h1>Dashboard</h1>
+            <p style={{ fontFamily: 'monospace', fontSize: 14, letterSpacing: '.03em' }}>
+              {clock.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric', year:'numeric' })}
+              {' · '}
+              {clock.toLocaleTimeString('en-US', { hour12: true, hour:'2-digit', minute:'2-digit', second:'2-digit' })}
+            </p>
+            {aiGreeting && <p style={{ fontSize: 15, color: 'var(--purple)', marginTop: 4, fontWeight: 500, lineHeight: 1.5 }}>🤖 {aiGreeting}</p>}
+          </div>
         </div>
         <div className="flex" style={{ gap: 8 }}>
           <AIStatusBadge onClick={() => setShowInsights(s => !s)} />
@@ -209,7 +216,8 @@ export default function Dashboard({ onNavigate }) {
             ))}
             {chatLoading && <div style={{ color: 'var(--text3)', fontSize: 12 }}>🤖 RepairBot is thinking…</div>}
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <SpeechButton onTranscript={t => setChatInput(prev => (prev ? prev + ' ' + t : t))} />
             <input className="form-control" value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendChat()} placeholder="Ask RepairBot…" style={{ flex: 1 }} />
             <button className="btn btn-primary btn-sm" onClick={sendChat} disabled={!chatInput.trim() || chatLoading}>Send</button>
           </div>
@@ -379,8 +387,26 @@ export default function Dashboard({ onNavigate }) {
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>{callCustomer.phone}</div>
                     <button className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setCallCustomer(null)}>Change customer</button>
                   </div>
-                  <div className="form-group"><label>Call notes *</label><textarea className="form-control" value={callNotes} onChange={e => setCallNotes(e.target.value)} rows={3} placeholder="What was discussed?" autoFocus /></div>
-                  <div className="form-group"><label>Outcome</label><input className="form-control" value={callOutcome} onChange={e => setCallOutcome(e.target.value)} placeholder="Left voicemail, will call back, etc." /></div>
+                  <div className="form-group">
+                    <div className="flex-between">
+                      <label>Call notes *</label>
+                      <div className="flex" style={{ gap: 6 }}>
+                        <MagicWandButton value={callNotes} onExpanded={setCallNotes} />
+                        <SpeechButton onTranscript={t => setCallNotes(prev => (prev ? prev + ' ' + t : t))} />
+                      </div>
+                    </div>
+                    <textarea className="form-control" value={callNotes} onChange={e => setCallNotes(e.target.value)} rows={3} placeholder="What was discussed?" autoFocus />
+                  </div>
+                  <div className="form-group">
+                    <div className="flex-between">
+                      <label>Outcome</label>
+                      <div className="flex" style={{ gap: 6 }}>
+                        <MagicWandButton value={callOutcome} onExpanded={setCallOutcome} />
+                        <SpeechButton onTranscript={t => setCallOutcome(prev => (prev ? prev + ' ' + t : t))} />
+                      </div>
+                    </div>
+                    <input className="form-control" value={callOutcome} onChange={e => setCallOutcome(e.target.value)} placeholder="Left voicemail, will call back, etc." />
+                  </div>
                   <div className="modal-footer">
                     <button className="btn" onClick={() => setLogCallModal(false)}>Cancel</button>
                     <button className="btn btn-primary" onClick={saveCall} disabled={callSaving || !callNotes.trim()}>{callSaving ? 'Saving…' : 'Log call'}</button>
@@ -389,6 +415,22 @@ export default function Dashboard({ onNavigate }) {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Support and Donation footer */}
+      {(settings?.donation_link || settings?.support_email) && (
+        <div style={{ marginTop: 40, padding: '20px 0', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'center', gap: 24, flexWrap: 'wrap' }}>
+          {settings?.donation_link && (
+            <a href={settings.donation_link} target="_blank" rel="noopener noreferrer" className="btn btn-sm" style={{ background: 'var(--warning-light)', color: 'var(--warning)', borderColor: 'var(--warning)', display: 'flex', alignItems: 'center', gap: 8 }}>
+              ☕ Like my software? Buy me a cup of coffee
+            </a>
+          )}
+          {settings?.support_email && (
+            <div style={{ fontSize: 13, color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              📧 Feedback & Requests: <a href={`mailto:${settings.support_email}`} style={{ color: 'var(--accent)', fontWeight: 600 }}>{settings.support_email}</a>
+            </div>
+          )}
         </div>
       )}
     </div>

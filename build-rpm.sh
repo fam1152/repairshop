@@ -12,7 +12,7 @@
 # ============================================================
 set -euo pipefail
 
-VERSION="9.0"
+VERSION="11.0.0"
 RELEASE="1"
 NAME="repairshop"
 TARNAME="${NAME}-${VERSION}"

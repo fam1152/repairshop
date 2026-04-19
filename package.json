@@ -1,6 +1,6 @@
 {
   "name": "repairshop",
-  "version": "1.0.0",
+  "version": "11.0.0",
   "description": "IT Repair Shop Management System",
   "scripts": {
     "install:all": "npm install && cd client && npm install",
@@ -16,8 +16,11 @@
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "cors": "^2.8.5",
+    "axios": "^1.6.7",
     "dotenv": "^16.4.1",
-    "multer": "^1.4.5-lts.1",
+    "multer": "^2.1.0",
+    "pdf-parse": "^1.1.1",
+    "tesseract.js": "^5.0.5",
     "node-cron": "^3.0.3",
     "pdfkit": "^0.14.0",
     "uuid": "^9.0.0",

@@ -8,18 +8,26 @@ import { AISettings } from '../components/AIAssistant';
 import Troubleshooting from '../components/Troubleshooting';
 import CloudSettings from '../components/CloudSettings';
 import { useAuth } from '../context/AuthContext';
+import { formatPhoneNumber } from '../components/Shared';
 
 
 function ManufacturersTab() {
+  const { settings, update } = useSettings();
   const [manufacturers, setManufacturers] = React.useState([]);
   const [editing, setEditing] = React.useState(null);
   const [form, setForm] = React.useState({ name: '', logo_emoji: '📦', device_types: [] });
   const [saving, setSaving] = React.useState(false);
+  const [newDeviceType, setNewDeviceType] = React.useState('');
 
   const load = () => { axios.get('/api/manufacturers/all').then(r => setManufacturers(r.data)).catch(()=>{}); };
   React.useEffect(() => { load(); }, []);
 
-  const DEVICE_TYPES = ['Phone','Laptop','Desktop','Tablet','Printer','Server','Network Device','Monitor','Other'];
+  // Parse device types from global settings
+  const DEVICE_TYPES = React.useMemo(() => {
+    try { return JSON.parse(settings?.device_types || '["Phone","Laptop","Desktop","Tablet","Printer","Server","Network Device","Monitor","Other"]'); }
+    catch(e) { return ['Phone','Laptop','Desktop','Tablet','Printer','Server','Network Device','Monitor','Other']; }
+  }, [settings?.device_types]);
+
   const EMOJIS = ['🍎','🌀','🔵','〽️','📺','🎮','🔍','1️⃣','💻','🖨️','⚡','💼','🅰️','🎯','💾','📦','🖥️','⌨️','🖱️'];
 
   const save = async () => {
@@ -38,8 +46,44 @@ function ManufacturersTab() {
     setForm(f => ({ ...f, device_types: f.device_types.includes(t) ? f.device_types.filter(x => x !== t) : [...f.device_types, t] }));
   };
 
+  const addGlobalDeviceType = async () => {
+    if (!newDeviceType.trim()) return;
+    if (DEVICE_TYPES.includes(newDeviceType.trim())) return alert('Type already exists');
+    const newList = [...DEVICE_TYPES, newDeviceType.trim()];
+    try {
+      await update({ device_types: JSON.stringify(newList) });
+      setNewDeviceType('');
+    } catch(e) { alert('Failed to add device type'); }
+  };
+
+  const deleteGlobalDeviceType = async (t) => {
+    if (!window.confirm(`Delete device type "${t}"? This will not affect existing repairs but will remove it from this list.`)) return;
+    const newList = DEVICE_TYPES.filter(x => x !== t);
+    try {
+      await update({ device_types: JSON.stringify(newList) });
+    } catch(e) { alert('Failed to delete device type'); }
+  };
+
   return (
     <div>
+      {/* ── Device Type Library ── */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, marginBottom: 14, fontSize: 14 }}>🔧 Manage Device Types</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+          {DEVICE_TYPES.map(t => (
+            <div key={t} style={{ display: 'flex', alignItems: 'center', background: 'var(--bg3)', borderRadius: 20, padding: '4px 4px 4px 12px', border: '1px solid var(--border)' }}>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{t}</span>
+              <button onClick={() => deleteGlobalDeviceType(t)} style={{ border: 'none', background: 'none', color: 'var(--text3)', cursor: 'pointer', padding: '0 8px', fontSize: 14 }}>✕</button>
+            </div>
+          ))}
+        </div>
+        <div className="flex" style={{ gap: 8 }}>
+          <input className="form-control" style={{ maxWidth: 300 }} value={newDeviceType} onChange={e => setNewDeviceType(e.target.value)} placeholder="Add new device type (e.g. Console)" />
+          <button className="btn btn-sm btn-primary" onClick={addGlobalDeviceType}>+ Add Type</button>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>This list determines what options appear when creating new repairs and selecting manufacturer coverage.</div>
+      </div>
+
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 700, marginBottom: 14, fontSize: 14 }}>
           {editing ? 'Edit manufacturer' : 'Add manufacturer'}
@@ -116,7 +160,9 @@ export default function Settings() {
     e.preventDefault();
     setSaving(true);
     try {
-      await update(form);
+      const payload = { ...form };
+      if (payload.phone) payload.phone = formatPhoneNumber(payload.phone);
+      await update(payload);
       if (logoFile) {
         const fd = new FormData();
         fd.append('logo', logoFile);
@@ -189,6 +235,23 @@ export default function Settings() {
             </div>
           </div>
 
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 16 }}>Screen Scaling & Accessibility</div>
+            <div className="form-group">
+              <label>UI & Font Scale: <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{form.ui_scale || '1.0'}x</span></label>
+              <input type="range" min="0.8" max="2.0" step="0.1" className="form-control" value={form.ui_scale || '1.0'} onChange={set('ui_scale')} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                <span>Small (0.8x)</span>
+                <span>Normal (1.0x)</span>
+                <span>Large Monitor (1.4x)</span>
+                <span>TV / Presentation (2.0x)</span>
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', background: 'var(--bg3)', padding: 10, borderRadius: 6, lineHeight: 1.5 }}>
+              💡 Icons and text will scale together automatically. Use a higher scale for large screens like TVs or wall-mounted monitors.
+            </div>
+          </div>
+
           <button type="submit" className="btn btn-primary" disabled={saving}>
             {saved ? '✓ Saved!' : saving ? 'Saving…' : 'Save display settings'}
           </button>
@@ -205,6 +268,38 @@ export default function Settings() {
             </div>
             <div className="form-group"><label>Email</label><input className="form-control" type="email" value={form.email || ''} onChange={set('email')} /></div>
             <div className="form-group"><label>Address</label><textarea className="form-control" value={form.address || ''} onChange={set('address')} rows={2} /></div>
+          </div>
+
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 16 }}>Software Support & Feedback</div>
+            <div className="form-group">
+              <label>Feedback & Requests Email</label>
+              <input className="form-control" type="email" value={form.support_email || ''} onChange={set('support_email')} placeholder="e.g. feedback@yourdomain.com" />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>This email will be displayed in the app for users to report issues.</div>
+            </div>
+            <div className="form-group">
+              <label>Donation Link (e.g. Buy Me A Coffee)</label>
+              <input className="form-control" value={form.donation_link || ''} onChange={set('donation_link')} placeholder="https://buymeacoffee.com/yourname" />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Show your appreciation for the software development.</div>
+            </div>
+          </div>
+
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 16 }}>Email Service (External API)</div>
+            <div className="form-group">
+              <label>API Provider</label>
+              <select className="form-control" value={form.email_provider || 'resend'} onChange={set('email_provider')}>
+                <option value="resend">Resend (Recommended)</option>
+                <option value="sendgrid">SendGrid</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label>API Key</label>
+              <input className="form-control" type="password" value={form.email_api_key || ''} onChange={set('email_api_key')} placeholder="Paste your API key here" />
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', background: 'var(--bg3)', padding: 10, borderRadius: 6 }}>
+              💡 This is used to send invoices and documents directly to customers. The "From" address will be the Company Email set above.
+            </div>
           </div>
 
           <div className="card" style={{ marginBottom: 16 }}>
@@ -334,6 +429,14 @@ SOFTWARE.`}</pre>
           </div>
         </div>
       )}
+      
+      <div style={{ marginTop: 32, paddingTop: 16, borderTop: '1px solid var(--border)', textAlign: 'center', fontSize: 12, color: 'var(--text3)', lineHeight: 1.6 }}>
+        <div>this software is provided as is and with no warrenty</div>
+        <div style={{ maxWidth: 600, margin: '8px auto 0', fontStyle: 'italic' }}>
+          any repair preformed is that person, persons, or shop responsibility and said persons may be liable for any damages caused. 
+          Double check your research before you do. "Measure twice, cut once"
+        </div>
+      </div>
     </div>
   );
 }

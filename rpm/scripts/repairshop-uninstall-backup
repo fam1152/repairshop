@@ -1,0 +1,49 @@
+#!/usr/bin/bash
+# RepairShop Auto-Backup on Uninstall
+# Saves a full backup to the Documents folder of all real users
+
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_NAME="repairshop_uninstall_backup_$TIMESTAMP.zip"
+SRC_DB="/var/lib/repairshop/repairshop.sqlite"
+SRC_UPLOADS="/var/lib/repairshop/uploads"
+TEMP_DIR="/tmp/repairshop_backup_$TIMESTAMP"
+
+echo "[Backup] Starting emergency uninstall backup..."
+
+# Create temp workspace
+mkdir -p "$TEMP_DIR"
+
+# Copy DB
+if [ -f "$SRC_DB" ]; then
+    cp "$SRC_DB" "$TEMP_DIR/repairshop.sqlite"
+fi
+
+# Copy uploads
+if [ -d "$SRC_UPLOADS" ]; then
+    cp -r "$SRC_UPLOADS" "$TEMP_DIR/uploads"
+fi
+
+# Zip it up
+cd /tmp
+zip -r "$BACKUP_NAME" "repairshop_backup_$TIMESTAMP" > /dev/null
+
+# Find real users (UID >= 1000) and copy to their Documents folder
+for USER_HOME in $(awk -F: '$3 >= 1000 && $3 < 60000 {print $6}' /etc/passwd); do
+    if [ -d "$USER_HOME" ]; then
+        DOC_DIR="$USER_HOME/Documents"
+        # If Documents doesn't exist, just use Home
+        if [ ! -d "$DOC_DIR" ]; then DOC_DIR="$USER_HOME"; fi
+        
+        cp "/tmp/$BACKUP_NAME" "$DOC_DIR/"
+        # Fix permissions so the user can actually open it
+        OWNER=$(basename "$USER_HOME")
+        chown "$OWNER":"$OWNER" "$DOC_DIR/$BACKUP_NAME"
+        echo "[Backup] Saved to $DOC_DIR/$BACKUP_NAME"
+    fi
+done
+
+# Cleanup
+rm -rf "$TEMP_DIR"
+rm "/tmp/$BACKUP_NAME"
+
+echo "[Backup] Complete."

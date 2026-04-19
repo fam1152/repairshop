@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { Modal, StatusBadge, Spinner, EmptyState, ConfirmDialog } from '../components/Shared';
+import { MagicWandButton } from '../components/AIAssistant';
 import { format } from 'date-fns';
 
 function InvoiceEditor({ invoiceId, onSave, onClose }) {
@@ -51,6 +52,17 @@ function InvoiceEditor({ invoiceId, onSave, onClose }) {
       await axios.put(`/api/invoices/${invoiceId}`, { ...inv, status: status || inv.status });
       onSave();
     } catch { alert('Error saving invoice'); }
+    setSaving(false);
+  };
+
+  const emailInvoice = async () => {
+    const email = window.prompt('Enter customer email address:', inv.customer_email || '');
+    if (!email) return;
+    setSaving(true);
+    try {
+      await axios.post('/api/email/send-invoice', { invoice_id: invoiceId, email });
+      alert('Invoice emailed successfully!');
+    } catch(e) { alert('Error: ' + (e.response?.data?.error || e.message)); }
     setSaving(false);
   };
 
@@ -110,7 +122,13 @@ function InvoiceEditor({ invoiceId, onSave, onClose }) {
         <button className="btn" onClick={addItem}>Add</button>
       </div>
 
-      <div className="form-group"><label>Notes on invoice</label><textarea className="form-control" value={inv.notes || ''} onChange={e => setInv(i => ({ ...i, notes: e.target.value }))} /></div>
+      <div className="form-group">
+        <div className="flex-between">
+          <label>Notes on invoice</label>
+          <MagicWandButton value={inv.notes} onExpanded={t => setInv(i => ({...i, notes: t}))} />
+        </div>
+        <textarea className="form-control" value={inv.notes || ''} onChange={e => setInv(i => ({ ...i, notes: e.target.value }))} />
+      </div>
       <div className="form-group">
         <label>Due date</label>
         <input className="form-control" type="date" value={inv.due_date ? inv.due_date.split('T')[0] : ''} onChange={e => setInv(i => ({ ...i, due_date: e.target.value }))} />
@@ -161,6 +179,7 @@ function InvoiceEditor({ invoiceId, onSave, onClose }) {
         <button className="btn" onClick={onClose}>Cancel</button>
         <button className="btn" onClick={() => save('draft')} disabled={saving}>Save draft</button>
         <button className="btn" onClick={() => save('sent')} disabled={saving}>Mark sent</button>
+        <button className="btn btn-sm" style={{ background: 'var(--accent-light)', color: 'var(--accent)', borderColor: 'var(--accent)' }} onClick={emailInvoice} disabled={saving}>📧 Email</button>
         <button className="btn btn-sm" style={{ background: 'var(--accent-light)', color: 'var(--accent)', borderColor: 'var(--accent)' }} onClick={() => setApplyPayment(p => !p)} disabled={saving}>💵 Apply payment</button>
         <button className="btn btn-sm" style={{ background: 'var(--warning-light)', color: 'var(--warning)', borderColor: 'var(--warning)' }} onClick={applyToAccount} disabled={saving}>📋 Apply to account</button>
         <button className="btn btn-primary" onClick={markPaid} disabled={saving}>✓ Mark paid</button>

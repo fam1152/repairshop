@@ -29,6 +29,10 @@ export default function BackupRestore() {
 
   useEffect(() => { load(); }, []);
 
+  const [manualPath, setManualPath] = useState('');
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualResult, setManualResult] = useState('');
+
   const downloadBackup = async () => {
     setDownloading(true);
     try {
@@ -46,6 +50,19 @@ export default function BackupRestore() {
       alert('Backup download failed. Check the server logs.');
     }
     setDownloading(false);
+  };
+
+  const manualBackupToPath = async () => {
+    if (!manualPath) return alert('Please enter a path');
+    setManualSaving(true);
+    setManualResult('');
+    try {
+      const res = await axios.get(`/api/backup/download?path=${encodeURIComponent(manualPath)}`);
+      setManualResult(res.data.message);
+    } catch (err) {
+      alert(err.response?.data?.error || 'Manual backup failed');
+    }
+    setManualSaving(false);
   };
 
   const doRestore = async (file) => {
@@ -150,6 +167,23 @@ export default function BackupRestore() {
             </span>
           ) : '⬇️ Download backup'}
         </button>
+
+        <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Or save to a local path on the server:</div>
+          <div className="flex" style={{ gap: 8 }}>
+            <input 
+              className="form-control" 
+              value={manualPath} 
+              onChange={e => setManualPath(e.target.value)} 
+              placeholder="/var/lib/repairshop/backups"
+              style={{ flex: 1 }}
+            />
+            <button className="btn" onClick={manualBackupToPath} disabled={manualSaving || !manualPath}>
+              {manualSaving ? 'Saving…' : 'Save to Path'}
+            </button>
+          </div>
+          {manualResult && <div style={{ marginTop: 10, color: 'var(--success)', fontSize: 13 }}>{manualResult}</div>}
+        </div>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       </div>
 

@@ -3,20 +3,38 @@ import axios from 'axios';
 
 export default function CloudSettings() {
   const [googleStatus, setGoogleStatus] = useState(null);
+  const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState('');
   const [syncResult, setSyncResult] = useState('');
   const [driveResult, setDriveResult] = useState(null);
   const [driveBacking, setDriveBacking] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const load = () => {
-    axios.get('/api/appointments/google/status')
-      .then(r => setGoogleStatus(r.data))
-      .catch(() => setGoogleStatus({ configured: false, connected: false }))
-      .finally(() => setLoading(false));
+    setLoading(true);
+    Promise.all([
+      axios.get('/api/appointments/google/status'),
+      axios.get('/api/settings')
+    ]).then(([statusRes, settingsRes]) => {
+      setGoogleStatus(statusRes.data);
+      setSettings(settingsRes.data);
+    }).catch(() => {
+      setGoogleStatus({ configured: false, connected: false });
+    }).finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
+
+  const saveSettings = async (updates) => {
+    setSaving(true);
+    try {
+      const newSettings = { ...settings, ...updates };
+      const r = await axios.put('/api/settings', newSettings);
+      setSettings(r.data);
+    } catch(e) { alert('Save failed: ' + e.message); }
+    setSaving(false);
+  };
 
   const connect = async () => {
     try {
@@ -103,6 +121,43 @@ export default function CloudSettings() {
               Connect Google to sync contacts and calendar. Requires Calendar and Contacts access.
             </p>
             <button className="btn btn-primary" onClick={connect}>🔗 Connect Google account</button>
+          </div>
+        )}
+      </div>
+
+      {/* Automatic Sync Toggles */}
+      <div className="card" style={{ marginBottom: 16, opacity: googleStatus?.connected ? 1 : 0.6, pointerEvents: googleStatus?.connected ? 'auto' : 'none' }}>
+        <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 14 }}>⚙️ Automatic sync settings</div>
+        {!googleStatus?.connected && <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 12 }}>Connect Google account to enable automatic sync.</div>}
+        
+        {settings && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!settings.auto_sync_google_calendar} 
+                onChange={e => saveSettings({ auto_sync_google_calendar: e.target.checked })} disabled={saving} />
+              <div style={{ fontSize: 13 }}>
+                <div style={{ fontWeight: 600 }}>Auto-sync Google Calendar</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>Push appointments and pull events every hour</div>
+              </div>
+            </label>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!settings.auto_sync_google_contacts} 
+                onChange={e => saveSettings({ auto_sync_google_contacts: e.target.checked })} disabled={saving} />
+              <div style={{ fontSize: 13 }}>
+                <div style={{ fontWeight: 600 }}>Auto-sync Google Contacts</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>Keep customer list in sync with Google Contacts every hour</div>
+              </div>
+            </label>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!settings.auto_sync_google_drive} 
+                onChange={e => saveSettings({ auto_sync_google_drive: e.target.checked })} disabled={saving} />
+              <div style={{ fontSize: 13 }}>
+                <div style={{ fontWeight: 600 }}>Daily Google Drive backup</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>Automatically upload a full backup to Drive daily at 3:00 AM</div>
+              </div>
+            </label>
           </div>
         )}
       </div>

@@ -1,6 +1,9 @@
 const router = require('express').Router();
 const auth = require('./auth.middleware');
 const https = require('https');
+const fs = require('fs');
+const path = require('path');
+const { exec } = require('child_process');
 
 router.use(auth);
 
@@ -85,17 +88,48 @@ function isDockerAvailable() {
   } catch(e) { return false; }
 }
 
+// Check if running as RPM
+function isRpmInstall() {
+  return process.cwd().startsWith('/opt/repairshop') || fs.existsSync('/etc/repairshop/repairshop.conf');
+}
+
+// ── GET LATEST FROM GITHUB ──
+router.get('/github-latest', async (req, res) => {
+  try {
+    // We use the GitHub API to get the latest release
+    const r = await fetchJson('https://api.github.com/repos/fam1152/repairshop/releases/latest', {
+      'User-Agent': 'RepairShop-App'
+    });
+    if (r.status !== 200) throw new Error('GitHub API returned ' + r.status);
+    res.json({
+      version: r.data.tag_name,
+      name: r.data.name,
+      published_at: r.data.published_at,
+      url: r.data.html_url,
+      body: r.data.body,
+      assets: r.data.assets.map(a => ({ name: a.name, url: a.browser_download_url, size: a.size }))
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── CHECK FOR UPDATE ──
 router.get('/check', async (req, res) => {
   const image = getImageName();
   const dockerAvailable = isDockerAvailable();
+  const rpmInstall = isRpmInstall();
 
   if (!dockerAvailable) {
+    // If not docker, we can still check GitHub
     return res.json({
       available: false,
       docker_socket: false,
+      is_rpm: rpmInstall,
       image,
-      message: 'Docker socket not mounted. Add the socket volume to docker-compose.yml to enable updates.'
+      message: rpmInstall 
+        ? 'Running as RPM package. Updates should be applied via: sudo dnf upgrade repairshop'
+        : 'Docker socket not mounted. Add the socket volume to docker-compose.yml to enable automatic updates.'
     });
   }
 
@@ -105,10 +139,12 @@ router.get('/check', async (req, res) => {
       getRemoteDigest(image)
     ]);
 
-    const updateAvailable = !!(localDigest && remoteDigest && localDigest !== remoteDigest);
+    const canDetermine = !!(localDigest && remoteDigest);
+    const updateAvailable = canDetermine && localDigest !== remoteDigest;
 
     res.json({
       available: updateAvailable,
+      unknown: !canDetermine,
       docker_socket: true,
       image,
       local_digest: localDigest ? localDigest.slice(0, 19) + '…' : null,
@@ -116,9 +152,9 @@ router.get('/check', async (req, res) => {
       checked_at: new Date().toISOString(),
       message: updateAvailable
         ? 'A new version is available on Docker Hub.'
-        : localDigest && remoteDigest
+        : canDetermine
           ? 'You are running the latest version.'
-          : 'Could not determine update status — check that the image is public or Docker Hub credentials are configured.'
+          : 'Could not determine update status — the local image was likely built from source and has no registry digest yet.'
     });
   } catch(e) {
     res.status(500).json({ available: false, error: e.message });
@@ -195,7 +231,8 @@ router.get('/info', (req, res) => {
     uptime_human: formatUptime(process.uptime()),
     started_at: new Date(Date.now() - process.uptime() * 1000).toISOString(),
     docker_socket: isDockerAvailable(),
-    app_version: 'v10'
+    is_git: fs.existsSync(path.join(__dirname, '../.git')),
+    app_version: 'v11.0.0'
   });
 });
 
@@ -209,5 +246,28 @@ function formatUptime(seconds) {
   parts.push(`${m}m`);
   return parts.join(' ');
 }
+
+// ── GIT UPDATE (SOURCE INSTALLS) ──
+router.post('/git-pull', async (req, res) => {
+  const gitDir = path.join(__dirname, '../.git');
+  if (!fs.existsSync(gitDir)) {
+    return res.status(400).json({ error: 'Not a git repository' });
+  }
+
+  res.json({ ok: true, message: 'Update started. pulling changes and rebuilding... The app will restart when finished.' });
+
+  const rootDir = path.join(__dirname, '..');
+  const cmd = `cd ${rootDir} && git pull && npm install && cd client && npm install && npm run build`;
+  
+  exec(cmd, (err, stdout, stderr) => {
+    if (err) {
+      console.error('[Update] Git update failed:', err.message);
+      console.error(stderr);
+    } else {
+      console.log('[Update] Git update successful. Restarting...');
+      setTimeout(() => process.exit(0), 1000);
+    }
+  });
+});
 
 module.exports = router;

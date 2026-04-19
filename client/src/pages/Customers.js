@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
-import { Modal, ConfirmDialog, SearchBar, Spinner, EmptyState } from '../components/Shared';
+import { Modal, ConfirmDialog, SearchBar, Spinner, EmptyState, formatPhoneNumber } from '../components/Shared';
+import { SpeechButton, MagicWandButton } from '../components/AIAssistant';
 import { format } from 'date-fns';
 
 function CustomerForm({ initial, onSave, onClose }) {
@@ -10,8 +11,9 @@ function CustomerForm({ initial, onSave, onClose }) {
   const submit = async e => {
     e.preventDefault(); setSaving(true);
     try {
-      if (initial?.id) await axios.put(`/api/customers/${initial.id}`, form);
-      else await axios.post('/api/customers', form);
+      const payload = { ...form, phone: formatPhoneNumber(form.phone) };
+      if (initial?.id) await axios.put(`/api/customers/${initial.id}`, payload);
+      else await axios.post('/api/customers', payload);
       onSave();
     } catch (err) { alert(err.response?.data?.error || 'Error'); }
     setSaving(false);
@@ -24,7 +26,16 @@ function CustomerForm({ initial, onSave, onClose }) {
       </div>
       <div className="form-group"><label>Email</label><input className="form-control" type="email" value={form.email} onChange={set('email')} /></div>
       <div className="form-group"><label>Address</label><input className="form-control" value={form.address} onChange={set('address')} /></div>
-      <div className="form-group"><label>Notes</label><textarea className="form-control" value={form.notes} onChange={set('notes')} rows={3} /></div>
+      <div className="form-group">
+        <div className="flex-between">
+          <label>Notes</label>
+          <div className="flex" style={{ gap: 6 }}>
+            <MagicWandButton value={form.notes} onExpanded={t => setForm(f => ({ ...f, notes: t }))} />
+            <SpeechButton onTranscript={t => setForm(f => ({ ...f, notes: f.notes ? f.notes + ' ' + t : t }))} />
+          </div>
+        </div>
+        <textarea className="form-control" value={form.notes} onChange={set('notes')} rows={3} />
+      </div>
       <div className="modal-footer">
         <button type="button" className="btn" onClick={onClose}>Cancel</button>
         <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save customer'}</button>
@@ -108,7 +119,13 @@ function ProductKeysPanel({ customerId, repairs }) {
               </select>
             </div>
           )}
-          <div className="form-group"><label>Notes</label><input className="form-control" value={form.notes} onChange={e => setForm(f => ({...f, notes: e.target.value}))} /></div>
+          <div className="form-group">
+            <div className="flex-between">
+              <label>Notes</label>
+              <MagicWandButton value={form.notes} onExpanded={t => setForm(f => ({...f, notes: t}))} />
+            </div>
+            <input className="form-control" value={form.notes} onChange={e => setForm(f => ({...f, notes: e.target.value}))} />
+          </div>
           <button type="submit" className="btn btn-primary btn-sm" disabled={saving}>+ Add key</button>
         </form>
       </div>
@@ -228,7 +245,13 @@ function NotesPanel({ customerId }) {
           <input className="form-control" value={newHeading} onChange={e => setNewHeading(e.target.value)} placeholder="e.g. Repair Notes, Device History, Preferences…" />
         </div>
         <div className="form-group">
-          <label>Notes *</label>
+          <div className="flex-between">
+            <label>Notes *</label>
+            <div className="flex" style={{ gap: 6 }}>
+              <MagicWandButton value={newBody} onExpanded={setNewBody} />
+              <SpeechButton onTranscript={t => setNewBody(prev => prev ? prev + ' ' + t : t)} />
+            </div>
+          </div>
           <textarea className="form-control" value={newBody} onChange={e => setNewBody(e.target.value)} rows={3} placeholder="Enter notes here…" />
         </div>
         <button className="btn btn-primary btn-sm" onClick={addNote} disabled={saving || !newBody.trim()}>{saving ? 'Saving…' : '+ Add note'}</button>
@@ -241,7 +264,15 @@ function NotesPanel({ customerId }) {
           {editingId === note.id ? (
             <div>
               <div className="form-group"><label style={{ fontSize: 11 }}>Heading</label><input className="form-control" value={editForm.heading} onChange={e => setEditForm(f => ({...f, heading: e.target.value}))} /></div>
-              <div className="form-group"><label style={{ fontSize: 11 }}>Notes</label><textarea className="form-control" value={editForm.body} onChange={e => setEditForm(f => ({...f, body: e.target.value}))} rows={3} /></div>
+              <div className="form-group">
+                <div className="flex-between">
+                  <label style={{ fontSize: 11 }}>Notes</label>
+                  <div className="flex" style={{ gap: 6 }}>
+                    <MagicWandButton value={editForm.body} onExpanded={t => setEditForm(f => ({...f, body: t}))} />
+                  </div>
+                </div>
+                <textarea className="form-control" value={editForm.body} onChange={e => setEditForm(f => ({...f, body: e.target.value}))} rows={3} />
+              </div>
               <div className="flex" style={{ gap: 6 }}>
                 <button className="btn btn-sm btn-primary" onClick={() => updateNote(note.id)}>Save</button>
                 <button className="btn btn-sm" onClick={() => setEditingId(null)}>Cancel</button>
@@ -444,10 +475,12 @@ export default function Customers({ initialState, onNavigate }) {
     <div className="page">
       <div className="page-header">
         <div><h1>Customers</h1><p>{customers.length} total</p></div>
-        <div className="flex">
+        <div className="flex" style={{ gap: 8 }}>
           <SearchBar value={q} onChange={setQ} placeholder="Search name, phone, email…" />
+          <button className="btn" onClick={() => window.open('/api/customers/export/csv', '_blank')}>📥 Export CSV</button>
           <button className="btn btn-primary" onClick={() => { setEditing(null); setModal(true); }}>+ New Customer</button>
         </div>
+
       </div>
       <div className="card">
         {loading ? <Spinner /> : customers.length === 0 ? (

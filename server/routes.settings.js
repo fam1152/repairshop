@@ -23,8 +23,38 @@ router.get('/', (req, res) => {
 });
 
 router.put('/', (req, res) => {
-  const { company_name, address, phone, email, tax_rate, tax_label, invoice_color, invoice_notes, dark_mode, currency } = req.body;
-  db.prepare(`UPDATE settings SET company_name=?,address=?,phone=?,email=?,tax_rate=?,tax_label=?,invoice_color=?,invoice_notes=?,dark_mode=?,currency=? WHERE id=1`).run(company_name||'My IT Shop',address||'',phone||'',email||'',parseFloat(tax_rate)||0,tax_label||'Tax',invoice_color||'#2563eb',invoice_notes||'',dark_mode?1:0,currency||'USD');
+  const settings = req.body;
+  const current = db.prepare('SELECT * FROM settings WHERE id=1').get();
+  
+  // Build dynamic update to avoid clearing fields not sent
+  const keys = [
+    'company_name', 'address', 'phone', 'email', 'tax_rate', 'tax_label', 
+    'invoice_color', 'invoice_notes', 'dark_mode', 'currency',
+    'auto_sync_google_calendar', 'auto_sync_google_contacts', 'auto_sync_google_drive',
+    'ui_scale', 'donation_link', 'support_email', 'email_provider', 'email_api_key',
+    'ai_mode', 'ai_cloud_provider', 'ai_cloud_key', 'ai_search_provider', 'ai_search_key',
+    'ai_auto_research', 'device_types'
+  ];
+
+  let sql = 'UPDATE settings SET ';
+  let params = [];
+  let updates = [];
+
+  keys.forEach(k => {
+    if (k in settings) {
+      updates.push(`${k}=?`);
+      let val = settings[k];
+      if (k.endsWith('_sync') || k === 'ai_auto_research' || k === 'dark_mode') val = val ? 1 : 0;
+      if (k === 'tax_rate') val = parseFloat(val) || 0;
+      params.push(val);
+    }
+  });
+
+  if (updates.length > 0) {
+    sql += updates.join(', ') + ' WHERE id=1';
+    db.prepare(sql).run(...params);
+  }
+
   res.json(db.prepare('SELECT * FROM settings WHERE id=1').get());
 });
 

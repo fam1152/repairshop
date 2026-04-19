@@ -55,10 +55,30 @@ export default function UpdateChecker() {
     try {
       const r = await axios.get('/api/update/check');
       setCheckResult(r.data);
+      
+      // If not docker, also check GitHub
+      if (!r.data.docker_socket) {
+        try {
+          const gh = await axios.get('/api/update/github-latest');
+          setCheckResult(prev => ({ ...prev, github: gh.data }));
+        } catch(e) {}
+      }
     } catch(e) {
-      setCheckResult({ available: false, error: 'Could not reach Docker Hub — check your internet connection.' });
+      setCheckResult({ available: false, error: 'Could not reach update server — check your internet connection.' });
     }
     setChecking(false);
+  };
+
+  const runGitUpdate = async () => {
+    if (!window.confirm('Update from Git?\n\nThis will run "git pull", rebuild the frontend, and restart. This may take a few minutes.')) return;
+    setApplying(true);
+    try {
+      await axios.post('/api/update/git-pull');
+      setCountdown(120); // Longer countdown for build
+    } catch(e) {
+      alert('Git update failed: ' + (e.response?.data?.error || e.message));
+      setApplying(false);
+    }
   };
 
   const applyUpdate = async () => {
@@ -161,17 +181,26 @@ export default function UpdateChecker() {
 
         {checkResult && (
           <div style={{
-            background: checkResult.available ? 'var(--accent-light)' : checkResult.error ? 'var(--danger-light)' : 'var(--success-light)',
-            border: `1px solid ${checkResult.available ? 'var(--accent)' : checkResult.error ? 'var(--danger)' : 'var(--success)'}`,
+            background: (checkResult.available || checkResult.github) ? 'var(--accent-light)' : checkResult.unknown ? 'var(--warning-light)' : checkResult.error ? 'var(--danger-light)' : 'var(--success-light)',
+            border: `1px solid ${(checkResult.available || checkResult.github) ? 'var(--accent)' : checkResult.unknown ? 'var(--warning)' : checkResult.error ? 'var(--danger)' : 'var(--success)'}`,
             borderRadius: 8,
             padding: '12px 14px',
             marginBottom: 14,
             fontSize: 13,
           }}>
-            <div style={{ fontWeight: 600, color: checkResult.available ? 'var(--accent)' : checkResult.error ? 'var(--danger)' : 'var(--success)', marginBottom: 4 }}>
-              {checkResult.available ? '🆕 Update available!' : checkResult.error ? '❌ Check failed' : '✓ Up to date'}
+            <div style={{ fontWeight: 600, color: (checkResult.available || checkResult.github) ? 'var(--accent)' : checkResult.unknown ? 'var(--warning)' : checkResult.error ? 'var(--danger)' : 'var(--success)', marginBottom: 4 }}>
+              {(checkResult.available || checkResult.github) ? '🆕 Update available!' : checkResult.unknown ? '⚠️ Status Unknown' : checkResult.error ? '❌ Check failed' : '✓ Up to date'}
             </div>
             <div style={{ color: 'var(--text2)' }}>{checkResult.error || checkResult.message}</div>
+            
+            {checkResult.github && (
+              <div style={{ marginTop: 10, padding: '10px', background: 'var(--bg1)', borderRadius: 6, border: '1px solid var(--border)' }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Latest GitHub Release: {checkResult.github.version}</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>Published {new Date(checkResult.github.published_at).toLocaleDateString()}</div>
+                <a href={checkResult.github.url} target="_blank" rel="noreferrer" className="btn btn-sm btn-primary" style={{ display: 'inline-block', textDecoration: 'none' }}>View Release & RPMs</a>
+              </div>
+            )}
+
             {checkResult.local_digest && (
               <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text3)', fontFamily: 'monospace' }}>
                 <div>Running: {checkResult.local_digest}</div>
@@ -188,11 +217,11 @@ export default function UpdateChecker() {
           <button
             className="btn btn-primary"
             onClick={checkForUpdate}
-            disabled={checking || applying || !info?.docker_socket}>
+            disabled={checking || applying}>
             {checking ? (
               <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ display: 'inline-block', width: 14, height: 14, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
-                Checking Docker Hub…
+                Checking for updates…
               </span>
             ) : '🔍 Check for update'}
           </button>
@@ -206,6 +235,17 @@ export default function UpdateChecker() {
               {applying ? 'Starting update…' : '⬆️ Apply update now'}
             </button>
           )}
+
+          {info?.is_git && (
+            <button
+              className="btn btn-sm"
+              onClick={runGitUpdate}
+              disabled={applying}
+              title="Update from Git source">
+              🐙 git pull & rebuild
+            </button>
+          )}
+
           <button className="btn btn-sm" onClick={forceUpdate} disabled={forceUpdating || !!countdown} style={{ marginLeft: 'auto' }}>
             {forceUpdating ? '⏳ Updating…' : '⚡ Force update'}
           </button>
@@ -284,6 +324,30 @@ function Changelog() {
 
   // Full hardcoded changelog — always accurate regardless of DB
   const CHANGELOG = [
+    {
+      version: 'v10.1.2', date: '2026-04-19', type: 'fix',
+      changes: [
+        'Fixed RPM installation scriptlet errors that caused post-install failures',
+        'Fixed SyntaxError (duplicate db declaration) in main server file',
+        'Improved version synchronization across all build artifacts (Docker/RPM)',
+      ]
+    },
+    {
+      version: 'v10.1.1', date: '2026-04-19', type: 'fix',
+      changes: [
+        'Fixed critical server crash due to duplicate db variable declaration',
+      ]
+    },
+    {
+      version: 'v10.1.0', date: '2026-04-19', type: 'feature',
+      changes: [
+        'Multi-mode update system: automated Git Pull & Rebuild for source installs',
+        'Enhanced RPM support: update instructions and GitHub release links in UI',
+        'Database Fix: Added missing manufacturer and device_type columns to inventory',
+        'Improved update detection for local builds (Status Unknown handling)',
+        'Cleanup of build artifacts and incorrectly named shell expansion directories',
+      ]
+    },
     {
       version: 'v10.0', date: '2026-04-13', type: 'feature',
       changes: [

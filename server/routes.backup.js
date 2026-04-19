@@ -18,8 +18,30 @@ if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
 // ── BACKUP ──
 // Creates a zip containing the SQLite database + all uploaded files
 router.get('/download', async (req, res) => {
+  const customPath = req.query.path;
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
   const filename = `repairshop-backup-${timestamp}.zip`;
+
+  if (customPath) {
+    try {
+      if (!fs.existsSync(customPath)) fs.mkdirSync(customPath, { recursive: true });
+      const fullPath = path.join(customPath, filename);
+      const output = fs.createWriteStream(fullPath);
+      const archive = archiver('zip', { zlib: { level: 6 } });
+      archive.pipe(output);
+
+      if (fs.existsSync(dbPath)) {
+        try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) {}
+        archive.file(dbPath, { name: 'repairshop.sqlite' });
+      }
+      if (fs.existsSync(uploadsPath)) archive.directory(uploadsPath, 'uploads');
+      
+      await archive.finalize();
+      return res.json({ ok: true, message: `Backup saved to ${fullPath}`, filename: fullPath });
+    } catch (err) {
+      return res.status(500).json({ error: `Failed to save backup to ${customPath}: ${err.message}` });
+    }
+  }
 
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);

@@ -3,13 +3,19 @@ import axios from 'axios';
 import { useSettings } from '../context/SettingsContext';
 
 // ── Live clock ──
-function LiveClock({ businessName }) {
+function LiveClock({ businessName, logoUrl, phone }) {
   const [now, setNow] = useState(new Date());
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(t); }, []);
   return (
     <div style={{ textAlign: 'center', padding: '24px 0 16px', borderBottom: '1px solid var(--border)', marginBottom: 24 }}>
-      {businessName && <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: '-.02em', marginBottom: 4 }}>{businessName}</div>}
-      <div style={{ fontSize: 42, fontWeight: 700, fontFamily: 'monospace', letterSpacing: '.04em', color: 'var(--accent)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, marginBottom: 8 }}>
+        {logoUrl && <img src={logoUrl} alt="Logo" style={{ height: 64, width: 64, objectFit: 'contain', borderRadius: 8 }} />}
+        <div style={{ textAlign: 'left' }}>
+          {businessName && <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: '-.02em', lineHeight: 1 }}>{businessName}</div>}
+          {phone && <div style={{ fontSize: 16, color: 'var(--text3)', marginTop: 4, fontWeight: 500 }}>{phone}</div>}
+        </div>
+      </div>
+      <div style={{ fontSize: 48, fontWeight: 700, fontFamily: 'monospace', letterSpacing: '.04em', color: 'var(--accent)' }}>
         {now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
       </div>
       <div style={{ fontSize: 18, color: 'var(--text2)', marginTop: 4 }}>
@@ -22,13 +28,18 @@ function LiveClock({ businessName }) {
 // ── Stat card with expandable list ──
 function StatCard({ icon, label, count, color, items, itemRenderer }) {
   const [expanded, setExpanded] = useState(false);
+  // Safely handle colors
+  const borderColor = color ? `${color}40` : 'var(--border)';
+  const bgColor = color ? `${color}10` : 'var(--bg3)';
+  const dotColor = color || 'var(--accent)';
+
   return (
     <div style={{
-      background: 'var(--bg2)', borderRadius: 14, border: `1px solid ${color}30`,
+      background: 'var(--bg2)', borderRadius: 14, border: `1px solid ${borderColor}`,
       overflow: 'hidden', transition: 'all .2s',
     }}>
       <div onClick={() => setExpanded(e => !e)} style={{ padding: '20px 20px 16px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14 }}>
-        <div style={{ width: 52, height: 52, borderRadius: 12, background: color + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, flexShrink: 0 }}>{icon}</div>
+        <div style={{ width: 52, height: 52, borderRadius: 12, background: bgColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, flexShrink: 0 }}>{icon}</div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 38, fontWeight: 800, color, lineHeight: 1 }}>{count}</div>
           <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 2, fontWeight: 600 }}>{label}</div>
@@ -39,10 +50,10 @@ function StatCard({ icon, label, count, color, items, itemRenderer }) {
       </div>
       {/* Always show up to 6 items */}
       {items?.length > 0 && (
-        <div style={{ borderTop: `1px solid ${color}20`, background: color + '08' }}>
+        <div style={{ borderTop: `1px solid ${borderColor}`, background: bgColor }}>
           {items.slice(0, 6).map((item, i) => (
-            <div key={i} style={{ padding: '8px 20px', borderBottom: i < Math.min(items.length, 6) - 1 ? `1px solid ${color}15` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%', background: color, flexShrink: 0 }} />
+            <div key={i} style={{ padding: '8px 20px', borderBottom: i < Math.min(items.length, 6) - 1 ? `1px solid ${borderColor}` : 'none', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, flexShrink: 0 }} />
               <div style={{ flex: 1, fontSize: 13 }}>{itemRenderer ? itemRenderer(item) : item}</div>
             </div>
           ))}
@@ -59,6 +70,8 @@ export default function KioskDashboard({ onNavigate }) {
   const { settings } = useSettings();
   const [data, setData] = useState(null);
   const [aiMessage, setAiMessage] = useState('');
+  const [activeKioskRepair, setActiveKioskRepair] = useState(null);
+  const [activeGuide, setActiveGuide] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -75,6 +88,17 @@ export default function KioskDashboard({ onNavigate }) {
       ]);
 
       const repairs = repairsRes.status === 'fulfilled' ? repairsRes.value.data : [];
+      const active = repairs.find(r => r.is_active_kiosk === 1);
+      setActiveKioskRepair(active);
+
+      if (active) {
+        // Fetch matching guide for this repair
+        const guidesRes = await axios.get(`/api/ai/guides?brand=${active.device_brand || ''}&model=${active.device_model || ''}`);
+        if (guidesRes.data?.length > 0) setActiveGuide(guidesRes.data[0]);
+        else setActiveGuide(null);
+      } else {
+        setActiveGuide(null);
+      }
       const appts = apptsRes.status === 'fulfilled' ? apptsRes.value.data : [];
       const reminders = remindersRes.status === 'fulfilled' ? remindersRes.value.data : [];
       const stats = statsRes.status === 'fulfilled' ? statsRes.value.data : {};
@@ -124,7 +148,11 @@ export default function KioskDashboard({ onNavigate }) {
     <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '0 0 32px' }}>
       {/* Header with clock */}
       <div style={{ maxWidth: 1400, margin: '0 auto', padding: '0 24px' }}>
-        <LiveClock businessName={settings?.company_name || 'RepairShop'} />
+        <LiveClock
+          businessName={settings?.company_name || 'RepairShop'}
+          logoUrl={settings?.logo_url}
+          phone={settings?.phone}
+        />
 
         {/* AI follow-up notification */}
         {aiMessage && (
@@ -203,6 +231,62 @@ export default function KioskDashboard({ onNavigate }) {
           />
         </div>
 
+        {/* ── Kiosk Dual Display ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+          {/* Left: Active Repairs List */}
+          <div className="card" style={{ height: 600, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>📋 Shop Workflow</span>
+              <span className="badge" style={{ background: 'var(--accent-light)', color: 'var(--accent)' }}>{(data?.inRepair?.length || 0) + (data?.diagnosing?.length || 0)} in progress</span>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {[...(data?.inRepair || []), ...(data?.diagnosing || [])].map(r => (
+                <div key={r.id} style={{
+                  padding: '14px 16px', borderRadius: 10, background: r.id === activeKioskRepair?.id ? 'var(--accent-light)' : 'var(--bg3)',
+                  border: `1px solid ${r.id === activeKioskRepair?.id ? 'var(--accent)' : 'var(--border)'}`,
+                  marginBottom: 10
+                }}>
+                  <div className="flex-between">
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{r.customer_name}</div>
+                    <span className={`badge badge-${r.status}`} style={{ fontSize: 10 }}>{r.status.replace('_',' ').toUpperCase()}</span>
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--text2)', marginTop: 4 }}>{r.device_brand} {r.device_model} — {r.title}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right: AI Panel */}
+          <div className="card" style={{ height: 600, display: 'flex', flexDirection: 'column', border: '1px solid rgba(124, 58, 237, 0.25)' }}>
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 16 }}>🤖 AI Technical Recommendations</div>
+            <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg3)', borderRadius: 10, padding: 20 }}>
+              {activeKioskRepair ? (
+                <div>
+                  <div style={{ background: 'var(--purple-light)', border: '1px solid var(--purple)', borderRadius: 8, padding: '12px 14px', marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--purple)' }}>FOCUS: {activeKioskRepair.device_brand} {activeKioskRepair.device_model}</div>
+                    <div style={{ fontSize: 14, color: 'var(--text2)', marginTop: 4 }}>{activeKioskRepair.description}</div>
+                  </div>
+                  {activeGuide ? (
+                    <div>
+                      <div style={{ fontSize: 14, lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>{activeGuide.guide_content}</div>
+                      <div style={{ marginTop: 24, paddingTop: 12, borderTop: '1px solid var(--border)', fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
+                        ⚠️ double check ai documentsition, AI can make mistakes
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>Researching specific model guides…</div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', color: 'var(--text3)' }}>
+                  <div style={{ fontSize: 40, marginBottom: 16 }}>👈</div>
+                  <div>Select a repair in the Repairs tab to display AI guides here.</div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* Today's incoming */}
         {data?.todayRepairs?.length > 0 && (
           <div className="card" style={{ marginBottom: 16 }}>
@@ -258,8 +342,22 @@ export default function KioskDashboard({ onNavigate }) {
         )}
 
         {/* Footer */}
-        <div style={{ textAlign: 'center', marginTop: 24, fontSize: 12, color: 'var(--text3)' }}>
-          Refreshes automatically every minute · RepairShop v10
+        <div style={{ textAlign: 'center', marginTop: 40, paddingTop: 24, borderTop: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 24, flexWrap: 'wrap', marginBottom: 12 }}>
+            {settings?.donation_link && (
+              <a href={settings.donation_link} target="_blank" rel="noopener noreferrer" className="btn btn-sm" style={{ background: 'var(--warning-light)', color: 'var(--warning)', borderColor: 'var(--warning)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                ☕ Like my software? Buy me a cup of coffee
+              </a>
+            )}
+            {settings?.support_email && (
+              <div style={{ fontSize: 13, color: 'var(--text3)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                📧 Feedback & Requests: <a href={`mailto:${settings.support_email}`} style={{ color: 'var(--accent)', fontWeight: 600 }}>{settings.support_email}</a>
+              </div>
+            )}
+          </div>
+          <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+            Refreshes automatically every minute · RepairShop v10
+          </div>
         </div>
       </div>
     </div>

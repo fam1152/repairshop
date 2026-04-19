@@ -31,7 +31,7 @@ console.warn = (...args) => { origWarn(...args); addLog('warn', args.join(' '));
 console.error = (...args) => { origError(...args); addLog('error', args.join(' ')); };
 
 // Add startup log
-addLog('info', `[System] RepairShop started at ${new Date().toISOString()}`);
+addLog('info', `[System] RepairShop v11.0.0 started at ${new Date().toISOString()}`);
 addLog('info', `[System] Node.js ${process.version} | PID ${process.pid}`);
 
 // Get live logs

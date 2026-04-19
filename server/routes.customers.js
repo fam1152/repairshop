@@ -54,6 +54,26 @@ router.get('/trash/list', (req, res) => {
   res.json(db.prepare('SELECT * FROM customers WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC').all());
 });
 
+router.get('/export/csv', (req, res) => {
+  const customers = db.prepare('SELECT * FROM customers WHERE deleted_at IS NULL ORDER BY name').all();
+  
+  const headers = ['ID', 'Name', 'Email', 'Phone', 'Address', 'Notes', 'Created At'];
+  const rows = customers.map(c => [
+    c.id,
+    `"${c.name.replace(/"/g, '""')}"`,
+    c.email,
+    c.phone,
+    `"${(c.address || '').replace(/"/g, '""')}"`,
+    `"${(c.notes || '').replace(/"/g, '""')}"`,
+    c.created_at
+  ]);
+
+  const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="customers-export.csv"');
+  res.send(csv);
+});
+
 // Call logs
 router.post('/:id/calls', (req, res) => {
   const { repair_id, direction, notes, outcome } = req.body;

@@ -1,14 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import PhotoDocs from '../components/PhotoDocs';
-import { RepairDiagnosis, NoteFormatter, CustomerMessage } from '../components/AIAssistant';
+import { RepairDiagnosis, NoteFormatter, CustomerMessage, SpeechButton, MagicWandButton } from '../components/AIAssistant';
 import { Modal, StatusBadge, SearchBar, Spinner, EmptyState, ConfirmDialog, REPAIR_STATUSES, STATUS_LABELS } from '../components/Shared';
+import { useSettings } from '../context/SettingsContext';
 import { format } from 'date-fns';
 
 const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
-const DEVICE_TYPES = ['Desktop', 'Laptop', 'Phone', 'Tablet', 'Server', 'Printer', 'Network Device', 'Other'];
 
 function RepairForm({ initial, customers, onSave, onClose }) {
+  const { settings } = useSettings();
+  const DEVICE_TYPES = React.useMemo(() => {
+    try { return JSON.parse(settings?.device_types || '["Desktop","Laptop","Phone","Tablet","Server","Printer","Network Device","Other"]'); }
+    catch(e) { return ["Desktop","Laptop","Phone","Tablet","Server","Printer","Network Device","Other"]; }
+  }, [settings?.device_types]);
+
   const [priceBook, setPriceBook] = React.useState([]);
   const [showPriceBook, setShowPriceBook] = React.useState(false);
 
@@ -118,8 +124,34 @@ function RepairForm({ initial, customers, onSave, onClose }) {
       </div>
 
       <div style={{ fontWeight: 600, fontSize: 12, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text3)', marginBottom: 10, marginTop: 4 }}>Repair Notes</div>
-      <div className="form-group"><label>Description / problem</label><textarea className="form-control" value={form.description} onChange={set('description')} /></div>
-      <div className="form-group"><label>Technician notes</label><textarea className="form-control" value={form.repair_notes} onChange={set('repair_notes')} /></div>
+      <div className="form-group">
+        <div className="flex-between">
+          <label>Description / problem</label>
+          <div className="flex" style={{ gap: 6 }}>
+            <button type="button" className="btn btn-xs" style={{ background: 'var(--purple-light)', color: 'var(--purple)', borderColor: 'var(--purple)' }}
+              onClick={async () => {
+                if (!form.description) return alert('Enter a problem description first.');
+                try {
+                  const r = await axios.post('/api/ai/generate-guide', { brand: form.device_brand, model: form.device_model, issue: form.description, device_type: form.device_type });
+                  alert('AI Guide generated and saved to library! View it in the AI panel.');
+                } catch(e) { alert('Failed: ' + e.message); }
+              }}>💡 Get AI Guide</button>
+            <MagicWandButton value={form.description} onExpanded={t => setForm(f => ({ ...f, description: t }))} deviceType={form.device_type} repairTitle={form.title} />
+            <SpeechButton onTranscript={t => setForm(f => ({ ...f, description: f.description ? f.description + ' ' + t : t }))} />
+          </div>
+        </div>
+        <textarea className="form-control" value={form.description} onChange={set('description')} />
+      </div>
+      <div className="form-group">
+        <div className="flex-between">
+          <label>Technician notes</label>
+          <div className="flex" style={{ gap: 6 }}>
+            <MagicWandButton value={form.repair_notes} onExpanded={t => setForm(f => ({ ...f, repair_notes: t }))} deviceType={form.device_type} repairTitle={form.title} />
+            <SpeechButton onTranscript={t => setForm(f => ({ ...f, repair_notes: f.repair_notes ? f.repair_notes + ' ' + t : t }))} />
+          </div>
+        </div>
+        <textarea className="form-control" value={form.repair_notes} onChange={set('repair_notes')} />
+      </div>
 
       <div style={{ fontWeight: 600, fontSize: 12, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text3)', marginBottom: 10, marginTop: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <span>Parts used</span>
@@ -210,6 +242,44 @@ function ReminderForm({ repairId, customerId, onSave, onClose }) {
         <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Set reminder'}</button>
       </div>
     </form>
+  );
+}
+
+function NoteCard({ title, value, onSave, label, deviceType, repairTitle }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(value || '');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { setText(value || ''); }, [value]);
+
+  const save = async () => {
+    setSaving(true);
+    try { await onSave(text); setEditing(false); }
+    catch { alert('Error saving notes'); }
+    setSaving(false);
+  };
+
+  return (
+    <div className="card card-sm" style={{ marginBottom: 10 }}>
+      <div className="flex-between" style={{ marginBottom: 6 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'var(--text3)' }}>{title}</div>
+        {!editing ? (
+          <button className="btn btn-icon btn-sm" style={{ padding: 4 }} onClick={() => setEditing(true)}>✏️</button>
+        ) : (
+          <div className="flex" style={{ gap: 6 }}>
+            <MagicWandButton value={text} onExpanded={setText} deviceType={deviceType} repairTitle={repairTitle} />
+            <SpeechButton onTranscript={t => setText(prev => prev ? prev + ' ' + t : t)} />
+            <button className="btn btn-sm btn-primary" onClick={save} disabled={saving}>{saving ? '…' : 'Save'}</button>
+            <button className="btn btn-sm" onClick={() => { setEditing(false); setText(value || ''); }}>✕</button>
+          </div>
+        )}
+      </div>
+      {editing ? (
+        <textarea className="form-control" value={text} onChange={e => setText(e.target.value)} rows={3} autoFocus />
+      ) : (
+        <div style={{ fontSize: 13, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{value || <em style={{ color: 'var(--text3)' }}>No {title.toLowerCase()} added.</em>}</div>
+      )}
+    </div>
   );
 }
 
@@ -319,10 +389,13 @@ function RepairDetail({ repairId, onEdit, onNavigate }) {
         </div>
       </div>
 
-      {repair.description && <div className="card card-sm" style={{ marginBottom: 10 }}><div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'var(--text3)', marginBottom: 6 }}>Problem Description</div><div style={{ fontSize: 13, lineHeight: 1.6 }}>{repair.description}</div></div>}
-      {repair.repair_notes && <div className="card card-sm" style={{ marginBottom: 10 }}><div style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', color: 'var(--text3)', marginBottom: 6 }}>Technician Notes</div><div style={{ fontSize: 13, lineHeight: 1.6 }}>{repair.repair_notes}</div></div>}
+      <NoteCard title="Problem Description" value={repair.description} deviceType={repair.device_type} repairTitle={repair.title}
+        onSave={async (val) => { await axios.put(`/api/repairs/${repair.id}`, { ...repair, description: val }); setRepair(r => ({ ...r, description: val })); }} />
+      
+      <NoteCard title="Technician Notes" value={repair.repair_notes} deviceType={repair.device_type} repairTitle={repair.title}
+        onSave={async (val) => { await axios.put(`/api/repairs/${repair.id}`, { ...repair, repair_notes: val }); setRepair(r => ({ ...r, repair_notes: val })); }} />
 
-      <PhotoDocs repairId={repair.id} />
+      <PhotoDocs repairId={repair.id} customerId={repair.customer_id} />
 
       {aiTab && (
         <div style={{ marginTop: 16 }}>
@@ -363,6 +436,68 @@ function RepairDetail({ repairId, onEdit, onNavigate }) {
   );
 }
 
+function GuideSearchModal({ onClose }) {
+  const [q, setQ] = useState('');
+  const [guides, setGuides] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [selected, setSelected] = useState(null);
+
+  const search = async (e) => {
+    if (e) e.preventDefault();
+    setLoading(true);
+    try {
+      const r = await axios.get(`/api/ai/guides?q=${encodeURIComponent(q)}`);
+      setGuides(r.data);
+    } catch(e) { alert('Search failed'); }
+    setLoading(false);
+  };
+
+  useEffect(() => { search(); }, []);
+
+  return (
+    <Modal open={true} onClose={onClose} title="📚 AI Repair Guide Library" large>
+      <div style={{ padding: '0 24px 24px' }}>
+        <form onSubmit={search} style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+          <input className="form-control" value={q} onChange={e => setQ(e.target.value)} placeholder="Search guides by brand, model, or issue…" autoFocus />
+          <button type="submit" className="btn btn-primary" disabled={loading}>{loading ? '…' : 'Search'}</button>
+        </form>
+
+        <div style={{ display: 'grid', gridTemplateColumns: selected ? '350px 1fr' : '1fr', gap: 20 }}>
+          <div style={{ maxHeight: '60vh', overflowY: 'auto', borderRight: selected ? '1px solid var(--border)' : 'none', paddingRight: selected ? 20 : 0 }}>
+            {guides.length === 0 && !loading && <div style={{ textAlign: 'center', color: 'var(--text3)', padding: 20 }}>No guides found for "{q}"</div>}
+            {guides.map(g => (
+              <div key={g.id} onClick={() => setSelected(g)} style={{
+                padding: '12px 14px', borderRadius: 10, background: selected?.id === g.id ? 'var(--accent-light)' : 'var(--bg3)',
+                border: `1px solid ${selected?.id === g.id ? 'var(--accent)' : 'var(--border)'}`,
+                marginBottom: 10, cursor: 'pointer', transition: 'all .2s'
+              }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{g.device_brand} {g.device_model}</div>
+                <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{g.issue}</div>
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>{new Date(g.created_at).toLocaleDateString()}</div>
+              </div>
+            ))}
+          </div>
+
+          {selected && (
+            <div style={{ maxHeight: '60vh', overflowY: 'auto', paddingLeft: 10 }}>
+              <div className="flex-between" style={{ marginBottom: 16 }}>
+                <h3 style={{ fontSize: 18, fontWeight: 800 }}>{selected.device_brand} {selected.device_model}</h3>
+                <button className="btn btn-xs" onClick={() => setSelected(null)}>✕ Close view</button>
+              </div>
+              <div style={{ background: 'var(--bg3)', padding: 16, borderRadius: 10, whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.7, color: 'var(--text)' }}>
+                {selected.guide_content}
+                <div style={{ marginTop: 24, paddingTop: 12, borderTop: '1px solid var(--border)', fontSize: 12, color: 'var(--text3)', fontStyle: 'italic' }}>
+                  ⚠️ double check ai documentsition, AI can make mistakes
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 export default function Repairs({ initialState, onNavigate }) {
   const [repairs, setRepairs] = useState([]);
   const [customers, setCustomers] = useState([]);
@@ -373,6 +508,7 @@ export default function Repairs({ initialState, onNavigate }) {
   const [editing, setEditing] = useState(null);
   const [selected, setSelected] = useState(initialState?.repairId || null);
   const [confirm, setConfirm] = useState(null);
+  const [guideModal, setGuideModal] = useState(false);
 
   const load = useCallback(async () => {
     const params = new URLSearchParams();
@@ -411,10 +547,12 @@ export default function Repairs({ initialState, onNavigate }) {
         <div><h1>Repairs</h1><p>{repairs.length} showing</p></div>
         <div className="flex" style={{ flexWrap: 'wrap', gap: 8 }}>
           <SearchBar value={q} onChange={setQ} placeholder="Search repairs…" />
+          <button className="btn" onClick={() => setGuideModal(true)}>📚 Search Guides</button>
           <select className="form-control" style={{ width: 'auto' }} value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
             <option value="">All statuses</option>
             {REPAIR_STATUSES.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
           </select>
+          <button className="btn" onClick={() => window.open('/api/repairs/export/csv', '_blank')}>📥 Export CSV</button>
           <button className="btn btn-primary" onClick={openNew}>+ New Repair</button>
         </div>
       </div>
@@ -425,10 +563,16 @@ export default function Repairs({ initialState, onNavigate }) {
         ) : (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Customer</th><th>Device</th><th>Title</th><th>Priority</th><th>Status</th><th>Date</th><th></th></tr></thead>
+              <thead><tr><th>Kiosk</th><th>Customer</th><th>Device</th><th>Title</th><th>Priority</th><th>Status</th><th>Date</th><th></th></tr></thead>
               <tbody>
                 {repairs.map(r => (
                   <tr key={r.id} className="clickable-row" onClick={() => setSelected(r.id)}>
+                    <td onClick={e => e.stopPropagation()} style={{ textAlign: 'center' }}>
+                      <input type="radio" name="kiosk_active" checked={r.is_active_kiosk === 1} onChange={async () => {
+                        await axios.patch(`/api/repairs/${r.id}/kiosk-active`);
+                        load();
+                      }} />
+                    </td>
                     <td style={{ fontWeight: 500 }}>{r.customer_name}</td>
                     <td style={{ color: 'var(--text2)', fontSize: 12 }}>{[r.device_brand, r.device_model].filter(Boolean).join(' ') || '—'}</td>
                     <td>{r.title}</td>
@@ -462,6 +606,7 @@ export default function Repairs({ initialState, onNavigate }) {
         <RepairForm initial={editing} customers={customers} onSave={() => { setModal(false); setEditing(null); load(); }} onClose={() => { setModal(false); setEditing(null); }} />
       </Modal>
       <ConfirmDialog open={!!confirm} message="Delete this repair?" onConfirm={async () => { await axios.delete(`/api/repairs/${confirm}`); setConfirm(null); load(); }} onCancel={() => setConfirm(null)} />
+      {guideModal && <GuideSearchModal onClose={() => setGuideModal(false)} />}
     </div>
   );
 }

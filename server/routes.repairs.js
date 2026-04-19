@@ -91,6 +91,31 @@ router.get('/trash/list', (req, res) => {
   res.json(db.prepare('SELECT r.*, c.name as customer_name FROM repairs r JOIN customers c ON r.customer_id=c.id WHERE r.deleted_at IS NOT NULL ORDER BY r.deleted_at DESC').all());
 });
 
+router.get('/export/csv', (req, res) => {
+  const repairs = db.prepare(`SELECT r.*, c.name as customer_name, c.phone as customer_phone FROM repairs r JOIN customers c ON r.customer_id = c.id WHERE r.deleted_at IS NULL ORDER BY r.created_at DESC`).all();
+  
+  const headers = ['ID', 'Customer', 'Phone', 'Title', 'Device', 'Brand', 'Model', 'Status', 'Priority', 'Labor Cost', 'Parts Cost', 'Created At'];
+  const rows = repairs.map(r => [
+    r.id,
+    r.customer_name,
+    r.customer_phone || '',
+    `"${r.title.replace(/"/g, '""')}"`,
+    r.device_type,
+    r.device_brand,
+    r.device_model,
+    r.status,
+    r.priority,
+    r.labor_cost,
+    r.parts_cost,
+    r.created_at
+  ]);
+
+  const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="repairs-export.csv"');
+  res.send(csv);
+});
+
 // Printable repair intake form PDF
 router.get('/:id/intake-pdf', (req, res) => {
   const repair = db.prepare(`SELECT r.*, c.name as customer_name, c.phone as customer_phone,
@@ -287,6 +312,12 @@ router.patch('/:id/status', (req, res) => {
     } catch(e) {}
   }
   res.json(updated);
+});
+
+router.patch('/:id/kiosk-active', (req, res) => {
+  db.prepare('UPDATE repairs SET is_active_kiosk = 0').run();
+  db.prepare('UPDATE repairs SET is_active_kiosk = 1 WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 // Permanently delete all soft-deleted items

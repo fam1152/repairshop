@@ -69,3 +69,15 @@ export function SearchBar({ value, onChange, placeholder }) {
 
 export const REPAIR_STATUSES = ['intake','diagnosing','waiting_parts','in_repair','ready','completed','cancelled'];
 export const STATUS_LABELS = { intake:'Intake', diagnosing:'Diagnosing', waiting_parts:'Waiting Parts', in_repair:'In Repair', ready:'Ready', completed:'Completed', cancelled:'Cancelled' };
+
+/**
+ * Formats a string of digits to XXX-XXX-XXXX
+ */
+export function formatPhoneNumber(val) {
+  if (!val) return '';
+  const cleaned = val.toString().replace(/\D/g, '');
+  if (cleaned.length === 10) {
+    return `${cleaned.slice(0, 3)}-${cleaned.slice(3, 6)}-${cleaned.slice(6)}`;
+  }
+  return val; // Return original if not 10 digits
+}

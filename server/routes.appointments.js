@@ -3,77 +3,27 @@ const { v4: uuidv4 } = require('uuid');
 const { google } = require('googleapis');
 const db = require('./db');
 const auth = require('./auth.middleware');
+const googleUtils = require('./google.utils');
 
 // Google OAuth2 client — credentials come from environment variables
 function getOAuth2Client() {
-  return new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/appointments/google/callback'
-  );
+  return googleUtils.getOAuth2Client();
 }
 
 function getStoredTokens() {
   return db.prepare('SELECT * FROM google_tokens WHERE id=1').get();
 }
 
-function getAuthorizedClient() {
-  const tokens = getStoredTokens();
-  if (!tokens || !tokens.refresh_token) return null;
-  const client = getOAuth2Client();
-  client.setCredentials({
-    access_token: tokens.access_token,
-    refresh_token: tokens.refresh_token,
-    expiry_date: tokens.expiry_date
-  });
-  return client;
-}
-
 async function syncToGoogleCalendar(appointment) {
-  try {
-    const client = getAuthorizedClient();
-    if (!client) return null;
-    const tokens = getStoredTokens();
-    const calendar = google.calendar({ version: 'v3', auth: client });
-    const calendarId = tokens.calendar_id || 'primary';
-
-    const event = {
-      summary: `${appointment.title} — ${appointment.customer_name || appointment.customer_name_field}`,
-      description: [
-        appointment.customer_phone ? `Phone: ${appointment.customer_phone}` : '',
-        appointment.customer_email ? `Email: ${appointment.customer_email}` : '',
-        appointment.device_type ? `Device: ${[appointment.device_type, appointment.device_brand, appointment.device_model].filter(Boolean).join(' ')}` : '',
-        appointment.description ? `Notes: ${appointment.description}` : '',
-      ].filter(Boolean).join('\n'),
-      start: { dateTime: new Date(appointment.start_time).toISOString() },
-      end: { dateTime: new Date(appointment.end_time).toISOString() },
-    };
-
-    if (appointment.google_event_id) {
-      // Update existing event
-      const res = await calendar.events.update({ calendarId, eventId: appointment.google_event_id, resource: event });
-      return res.data.id;
-    } else {
-      // Create new event
-      const res = await calendar.events.insert({ calendarId, resource: event });
-      return res.data.id;
-    }
-  } catch (e) {
-    console.error('Google Calendar sync error:', e.message);
-    return null;
-  }
+  return await googleUtils.syncToGoogleCalendar(appointment);
 }
 
 async function deleteFromGoogleCalendar(googleEventId) {
-  try {
-    const client = getAuthorizedClient();
-    if (!client || !googleEventId) return;
-    const tokens = getStoredTokens();
-    const calendar = google.calendar({ version: 'v3', auth: client });
-    await calendar.events.delete({ calendarId: tokens.calendar_id || 'primary', eventId: googleEventId });
-  } catch (e) {
-    console.error('Google Calendar delete error:', e.message);
-  }
+  const client = googleUtils.getAuthorizedClient();
+  if (!client || !googleEventId) return;
+  const tokens = getStoredTokens();
+  const calendar = google.calendar({ version: 'v3', auth: client });
+  await calendar.events.delete({ calendarId: tokens.calendar_id || 'primary', eventId: googleEventId });
 }
 
 // ── Public routes (no auth) ──
@@ -127,6 +77,7 @@ router.get('/google/auth-url', (req, res) => {
     scope: [
       'https://www.googleapis.com/auth/calendar',
       'https://www.googleapis.com/auth/contacts',
+      'https://www.googleapis.com/auth/drive.file',
       'email',
       'profile'
     ]

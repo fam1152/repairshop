@@ -40,7 +40,73 @@ router.post('/ai', async (req, res) => {
   db.prepare('INSERT INTO chat_messages (id,sender_id,sender_name,recipient_id,is_broadcast,message,is_ai) VALUES (?,?,?,?,?,?,0)')
     .run(userMsgId, req.user.id, req.user.username, 'ai', 0, message.trim());
 
+  // ── 🔍 Intelligent Search Context ──
+  let searchContext = '';
+  try {
+    const q = message.trim();
+    // Split into words and filter out common short words to find potential search terms
+    const words = q.split(/\s+/).filter(w => w.length > 2 && !['the', 'and', 'for', 'can', 'you', 'find', 'with', 'this'].includes(w.toLowerCase()));
+    
+    // Build search conditions
+    const searchTerms = [q, ...words];
+    
+    let foundCustomers = [];
+    let foundRepairs = [];
+    let foundInvoices = [];
+
+    for (const term of searchTerms) {
+      if (foundCustomers.length < 5) {
+        const c = db.prepare(`SELECT * FROM customers WHERE deleted_at IS NULL AND (name LIKE ? OR phone LIKE ? OR email LIKE ?) LIMIT 3`)
+          .all(`%${term}%`, `%${term}%`, `%${term}%`);
+        c.forEach(x => { if (!foundCustomers.find(f => f.id === x.id)) foundCustomers.push(x); });
+      }
+      if (foundRepairs.length < 5) {
+        const r = db.prepare(`SELECT r.*, c.name as customer_name FROM repairs r JOIN customers c ON r.customer_id=c.id 
+          WHERE r.deleted_at IS NULL AND (r.title LIKE ? OR r.serial_number LIKE ? OR r.device_model LIKE ? OR c.name LIKE ?) LIMIT 3`)
+          .all(`%${term}%`, `%${term}%`, `%${term}%`, `%${term}%`);
+        r.forEach(x => { if (!foundRepairs.find(f => f.id === x.id)) foundRepairs.push(x); });
+      }
+      if (foundInvoices.length < 5) {
+        const i = db.prepare(`SELECT i.*, c.name as customer_name FROM invoices i JOIN customers c ON i.customer_id=c.id 
+          WHERE i.deleted_at IS NULL AND (i.invoice_number LIKE ? OR c.name LIKE ?) LIMIT 3`)
+          .all(`%${term}%`, `%${term}%`);
+        i.forEach(x => { if (!foundInvoices.find(f => f.id === x.id)) foundInvoices.push(x); });
+      }
+    }
+
+    if (foundCustomers.length > 0) {
+      searchContext += "\nRelevant Customers found:\n" + foundCustomers.slice(0, 3).map(c => {
+        // Fetch detailed context for each customer
+        const notes = db.prepare('SELECT notes, created_at FROM customer_notes WHERE customer_id=? ORDER BY created_at DESC LIMIT 3').all(c.id);
+        const calls = db.prepare('SELECT notes, outcome, created_at FROM call_logs WHERE customer_id=? ORDER BY created_at DESC LIMIT 3').all(c.id);
+        const comms = db.prepare('SELECT subject, body, direction, created_at FROM communications WHERE customer_id=? ORDER BY created_at DESC LIMIT 3').all(c.id);
+        
+        let detail = `- ${c.name} (Phone: ${c.phone}, Email: ${c.email})`;
+        if (notes.length > 0) detail += `\n  Notes: ${notes.map(n => n.notes).join(' | ')}`;
+        if (calls.length > 0) detail += `\n  Call History: ${calls.map(cl => `${cl.notes} (${cl.outcome})`).join(' | ')}`;
+        if (comms.length > 0) detail += `\n  Recent Emails: ${comms.map(cm => `[${cm.direction}] ${cm.subject}`).join(' | ')}`;
+        return detail;
+      }).join('\n');
+    }
+    if (foundRepairs.length > 0) {
+      searchContext += "\nRelevant Repairs found:\n" + foundRepairs.slice(0, 3).map(r => {
+        // Fetch photo documentation captions
+        const photos = db.prepare('SELECT caption, stage FROM repair_photos WHERE repair_id=? AND caption IS NOT NULL AND caption != ""').all(r.id);
+        let detail = `- ${r.title} for ${r.customer_name} (Status: ${r.status}, S/N: ${r.serial_number})`;
+        if (photos.length > 0) detail += `\n  Photo documentation: ${photos.map(p => `${p.stage}: ${p.caption}`).join(' | ')}`;
+        return detail;
+      }).join('\n');
+    }
+    if (foundInvoices.length > 0) {
+      searchContext += "\nRelevant Invoices found:\n" + foundInvoices.slice(0, 3).map(i => `- Invoice #${i.invoice_number} for ${i.customer_name} (Total: $${i.total}, Balance: $${i.balance_due})`).join('\n');
+    }
+  } catch (e) { console.error('AI search context error:', e); }
+
   // Build context from recent repairs/stats for the AI
+  const sett = db.prepare('SELECT device_types FROM settings WHERE id=1').get();
+  const manufacturers = db.prepare('SELECT name, device_types FROM manufacturers WHERE active=1').all();
+  const shopInfo = `Supported Manufacturers: ${manufacturers.map(m => `${m.name} (${JSON.parse(m.device_types || '[]').join(', ')})`).join('; ')}\nAvailable Device Types: ${sett?.device_types || '[]'}`;
+
   const openRepairs = db.prepare("SELECT COUNT(*) as c FROM repairs WHERE status NOT IN ('completed','cancelled')").get().c;
   const todayRepairs = db.prepare("SELECT COUNT(*) as c FROM repairs WHERE date(created_at)=date('now')").get().c;
   const lowStock = db.prepare('SELECT COUNT(*) as c FROM inventory WHERE quantity <= quantity_min').get().c;
@@ -51,14 +117,19 @@ router.post('/ai', async (req, res) => {
 
   const systemPrompt = `You are RepairBot, the AI assistant for an IT repair shop management system. You are helpful, friendly, and knowledgeable about IT repairs, customer service, and shop management.
 
+Shop Policy & Capability:
+${shopInfo}
+
 Current shop status:
 - Open repairs: ${openRepairs}
 - New repairs today: ${todayRepairs}
 - Low stock items: ${lowStock}
 - Pending reminders: ${pendingReminders}
 - Current user: ${req.user.username}
+${searchContext ? `\nDatabase Information relevant to the user's message (History, Call Logs, Notes):\n${searchContext}` : ''}
 
-Keep responses concise and practical. You can answer questions about repairs, inventory, customers, IT issues, and shop management. If asked about shop data you don't have access to, say so and suggest checking the relevant section of the app.`;
+Keep responses concise and practical. You can answer questions about repairs, inventory, customers, IT issues, and shop management. If asked about shop data you don't have access to, say so and suggest checking the relevant section of the app.
+When providing information from the database, be specific (e.g., mention names, phone numbers, or invoice numbers).`;
 
   try {
     const body = JSON.stringify({

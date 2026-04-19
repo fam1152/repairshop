@@ -3,8 +3,24 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
+
+// Load RPM-style config if present
+const rpmConfigPath = '/etc/repairshop/repairshop.conf';
+if (fs.existsSync(rpmConfigPath)) {
+  const rpmConfig = fs.readFileSync(rpmConfigPath, 'utf8');
+  rpmConfig.split('\n').forEach(line => {
+    const [key, ...valueParts] = line.split('=');
+    if (key && valueParts.length > 0) {
+      const value = valueParts.join('=').trim().replace(/^["']|["']$/g, '');
+      process.env[key.trim()] = value;
+    }
+  });
+}
+
 const cron = require('node-cron');
 const activityLogger = require('./activity.middleware');
+const googleUtils = require('./google.utils');
+const db = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -35,6 +51,7 @@ app.use('/api/update', require('./routes.update'));
 app.use('/api/ai', require('./routes.ai'));
 app.use('/api/money', require('./routes.money'));
 app.use('/api/chat', require('./routes.chat'));
+app.use('/api/email', require('./routes.email'));
 app.use('/api/system', require('./routes.system'));
 app.use('/api/reports', require('./routes.reports'));
 app.use('/api/manufacturers', require('./routes.manufacturers'));
@@ -42,6 +59,32 @@ app.use('/api/pricebook', require('./routes.pricebook'));
 app.use('/api/notifications', require('./routes.notifications'));
 app.use('/api/workflows', require('./routes.workflows'));
 app.use('/api/users', require('./routes.users'));
+
+// Google Automatic Sync Background Jobs
+// Runs every hour
+cron.schedule('0 * * * *', async () => {
+  const settings = db.prepare('SELECT * FROM settings WHERE id=1').get();
+  if (!settings) return;
+
+  if (settings.auto_sync_google_calendar) {
+    console.log('[Cron] Running auto-sync Google Calendar...');
+    await googleUtils.syncAllCalendar();
+  }
+
+  if (settings.auto_sync_google_contacts) {
+    console.log('[Cron] Running auto-sync Google Contacts...');
+    await googleUtils.syncAllContacts();
+  }
+});
+
+// Daily automatic backup to Google Drive at 3 AM
+cron.schedule('0 3 * * *', async () => {
+  const settings = db.prepare('SELECT * FROM settings WHERE id=1').get();
+  if (settings && settings.auto_sync_google_drive) {
+    console.log('[Cron] Running daily Google Drive backup...');
+    await googleUtils.backupToDrive();
+  }
+});
 
 // Activity logging middleware — runs after auth
 app.use('/api', activityLogger);
@@ -86,9 +129,13 @@ cron.schedule('0 * * * *', async () => {
     archive.pipe(output);
     if (fs.existsSync(dbPath)) { try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch(e) {} archive.file(dbPath, { name: 'repairshop.sqlite' }); }
     if (fs.existsSync(uploadsPath)) archive.directory(uploadsPath, 'uploads');
-    // Include Ollama models if they exist
-    const ollamaPath = '/mnt/tank/ollama-models';
-    if (fs.existsSync(ollamaPath)) archive.directory(ollamaPath, 'ollama-models');
+    
+    // Auto-update LLM models during backup as requested
+    try {
+      const aiRoutes = require('./routes.ai');
+      if (aiRoutes.updateModels) aiRoutes.updateModels();
+    } catch (e) { console.error('[Backup] LLM update failed:', e.message); }
+
     await archive.finalize();
 
     db.prepare("UPDATE scheduled_backups SET last_run=? WHERE id=1").run(now.toISOString());
@@ -115,8 +162,15 @@ cron.schedule('*/5 * * * *', () => {
   } catch(e) { console.error('[Workflows] Error:', e.message); }
 });
 
+// Cron: AI Auto-research repair guides (every 2 hours)
+cron.schedule('0 */2 * * *', () => {
+  try {
+    const ai = require('./routes.ai');
+    if (ai.runAutoResearch) ai.runAutoResearch();
+  } catch(e) {}
+});
+
 // Cron: check reminders every hour
-const db = require('./db');
 cron.schedule('0 * * * *', () => {
   const now = new Date().toISOString();
   const overdue = db.prepare("SELECT COUNT(*) as c FROM reminders WHERE status='pending' AND due_date <= ?").get(now);
@@ -137,23 +191,35 @@ if (SSL_CERT && SSL_KEY && fs.existsSync(SSL_CERT) && fs.existsSync(SSL_KEY)) {
   // HTTPS server (camera, secure features)
   https.createServer(sslOptions, app).listen(HTTPS_PORT, '0.0.0.0', () => {
     console.log(`\n🔒 IT Repair Shop (HTTPS) running at https://0.0.0.0:${HTTPS_PORT}`);
-    console.log(`   Camera/scanner will work at https://<your-ip>:${HTTPS_PORT}\n`);
-  });
-  // HTTP still available on PORT (redirect to HTTPS)
-  const http = require('http');
-  const redirect = require('express')();
-  redirect.use((req, res) => {
-    const host = req.headers.host?.replace(/:\d+/, '') || 'localhost';
-    res.redirect(301, `https://${host}:${HTTPS_PORT}${req.url}`);
-  });
-  http.createServer(redirect).listen(PORT, '0.0.0.0', () => {
-    console.log(`   HTTP on port ${PORT} redirects to HTTPS:${HTTPS_PORT}\n`);
-  });
-} else {
-  // HTTP only
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n🔧 IT Repair Shop running at http://0.0.0.0:${PORT}`);
-    console.log(`   Access on your network via http://<your-ip>:${PORT}`);
-    if (!SSL_CERT) console.log(`   💡 To enable HTTPS (needed for camera): set SSL_CERT, SSL_KEY, HTTPS_PORT env vars\n`);
+    console.log(`   Camera/scanner will work at https://<your-ip>:${HTTPS_PORT}`);
   });
 }
+
+// HTTP server (always available)
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🔧 IT Repair Shop running at http://0.0.0.0:${PORT}`);
+  console.log(`   Access on your network via http://<your-ip>:${PORT}`);
+  if (!SSL_CERT) console.log(`   💡 To enable HTTPS (needed for camera): set SSL_CERT, SSL_KEY, HTTPS_PORT env vars\n`);
+});
+
+// ── Graceful Shutdown ──
+function shutdown() {
+  console.log('\n[Server] Shutting down cleanly...');
+  server.close(() => {
+    console.log('[Server] HTTP connections closed.');
+    try {
+      db.close();
+      console.log('[Server] Database connection closed.');
+    } catch(e) { console.error('[Server] Error closing database:', e.message); }
+    process.exit(0);
+  });
+
+  // Force exit if server.close hangs
+  setTimeout(() => {
+    console.error('[Server] Could not close connections in time, forceful exit.');
+    process.exit(1);
+  }, 5000);
+}
+
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

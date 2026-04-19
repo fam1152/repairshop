@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { Modal, Spinner, EmptyState, ConfirmDialog } from '../components/Shared';
+import { useSettings } from '../context/SettingsContext';
 import { format, startOfWeek, addDays, isSameDay, startOfMonth, endOfMonth, eachDayOfInterval, isToday, parseISO, addWeeks, subWeeks } from 'date-fns';
 
 const STATUS_COLORS = {
@@ -11,6 +12,12 @@ const STATUS_COLORS = {
 };
 
 function AppointmentForm({ initial, customers, onSave, onClose }) {
+  const { settings } = useSettings();
+  const DEVICE_TYPES = React.useMemo(() => {
+    try { return JSON.parse(settings?.device_types || '["Desktop","Laptop","Phone","Tablet","Server","Printer","Network Device","Other"]'); }
+    catch(e) { return ["Desktop","Laptop","Phone","Tablet","Server","Printer","Network Device","Other"]; }
+  }, [settings?.device_types]);
+
   const now = new Date();
   const defaultStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0);
   const defaultEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 10, 0);
@@ -84,7 +91,7 @@ function AppointmentForm({ initial, customers, onSave, onClose }) {
         <div className="form-group"><label>Type</label>
           <select className="form-control" value={form.device_type} onChange={set('device_type')}>
             <option value="">Select…</option>
-            {['Desktop','Laptop','Phone','Tablet','Server','Printer','Network Device','Other'].map(t => <option key={t}>{t}</option>)}
+            {DEVICE_TYPES.map(t => <option key={t}>{t}</option>)}
           </select>
         </div>
         <div className="form-group"><label>Brand</label><input className="form-control" value={form.device_brand} onChange={set('device_brand')} /></div>

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=RepairShop Tray
+Comment=RepairShop Service Monitor
+Exec=/usr/bin/repairshop-tray
+Icon=repairshop
+Terminal=false
+Categories=System;Monitor;
+X-GNOME-Autostart-enabled=true

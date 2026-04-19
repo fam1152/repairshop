@@ -8,7 +8,23 @@ export function SettingsProvider({ children }) {
   const [userPrefs, setUserPrefs] = useState(null);
 
   const applyTheme = (darkMode) => {
-    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+    const isDark = darkMode === 1 || darkMode === true;
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    localStorage.setItem('repairshop:theme', isDark ? 'dark' : 'light');
+  };
+
+  // Immediate theme application from local cache on mount
+  useEffect(() => {
+    const cached = localStorage.getItem('repairshop:theme');
+    if (cached) {
+      document.documentElement.setAttribute('data-theme', cached);
+    }
+  }, []);
+
+  const applyScale = (scale) => {
+    const s = scale || '1.0';
+    document.documentElement.style.setProperty('--ui-scale', s);
+    document.documentElement.style.fontSize = `${16 * parseFloat(s)}px`;
   };
 
   const load = useCallback(async () => {
@@ -21,12 +37,18 @@ export function SettingsProvider({ children }) {
       ]);
       const global = globalRes.status === 'fulfilled' ? globalRes.value.data : {};
       setSettings(global);
+      applyScale(global.ui_scale);
+      
       if (prefsRes.status === 'fulfilled') {
         const prefs = prefsRes.value.data;
         setUserPrefs(prefs);
         applyTheme(prefs.dark_mode);
       } else {
-        applyTheme(global.dark_mode || 0);
+        // Only apply global theme if we don't have a local cache yet
+        const cached = localStorage.getItem('repairshop:theme');
+        if (!cached) {
+          applyTheme(global.dark_mode || 0);
+        }
       }
     } catch(e) {}
   }, []);
@@ -45,6 +67,9 @@ export function SettingsProvider({ children }) {
     setSettings(r.data);
     if ('dark_mode' in data) {
       await toggleDarkMode(data.dark_mode ? 1 : 0);
+    }
+    if ('ui_scale' in data) {
+      applyScale(data.ui_scale);
     }
     return r.data;
   };

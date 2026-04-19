@@ -1,23 +1,135 @@
 const router = require('express').Router();
 const https = require('https');
 const http = require('http');
+const path = require('path');
+const fs = require('fs');
 const db = require('./db');
 const auth = require('./auth.middleware');
+const multer = require('multer');
+const pdf = require('pdf-parse');
+const Tesseract = require('tesseract.js');
+const { v4: uuidv4 } = require('uuid');
+const upload = multer({ limits: { fileSize: 20 * 1024 * 1024 } }); // 20MB limit
 
 router.use(auth);
 
 const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
 
+// ── Helper: Get Shop and Training Context ──
+async function getAIContext() {
+  const settings = db.prepare('SELECT company_name, phone, device_types FROM settings WHERE id=1').get();
+  const manufacturers = db.prepare('SELECT name, device_types FROM manufacturers WHERE active=1').all();
+  let training = { system_context: '', examples: [] };
+  try {
+    const trainPath = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'ai-training.json');
+    if (fs.existsSync(trainPath)) {
+      training = JSON.parse(fs.readFileSync(trainPath, 'utf8'));
+    }
+  } catch(e) {}
+
+  let context = `Shop Name: ${settings?.company_name || 'Our IT Shop'}\n`;
+  if (settings?.phone) context += `Shop Phone: ${settings.phone}\n`;
+  if (training.system_context) context += `\nAdditional Context:\n${training.system_context}\n`;
+  
+  // ── Load Technical Knowledge Base ──
+  try {
+    const kbPath = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'knowledge-base');
+    if (!fs.existsSync(kbPath)) fs.mkdirSync(kbPath, { recursive: true });
+    const kbFiles = fs.readdirSync(kbPath).filter(f => f.endsWith('.txt') || f.endsWith('.learned'));
+    if (kbFiles.length > 0) {
+      context += `\nTechnical Knowledge Base (Manuals/Schematics):\n`;
+      kbFiles.forEach(f => {
+        const content = fs.readFileSync(path.join(kbPath, f), 'utf8');
+        context += `--- Document: ${f} ---\n${content}\n`;
+      });
+    }
+  } catch(e) { console.error('[AI] KB load error:', e); }
+
+  if (training.examples && training.examples.length > 0) {
+    context += `\nHere are some examples of how to respond:\n`;
+    training.examples.forEach(ex => {
+      context += `Q: ${ex.prompt}\nA: ${ex.response}\n`;
+    });
+  }
+
+  return { 
+    shop_name: settings?.company_name || 'Our IT Shop',
+    training_context: context,
+    system_context_only: training.system_context || '',
+    settings, // Include full settings object
+    shop_info: `Supported Manufacturers: ${manufacturers.map(m => `${m.name} (${JSON.parse(m.device_types || '[]').join(', ')})`).join('; ')}\nAvailable Device Types: ${settings?.device_types || '[]'}`
+  };
+}
+
+// ── Web Search Helper (Serper.dev) ──
+async function performWebSearch(query, apiKey) {
+  if (!apiKey) return "No Search API key provided.";
+  try {
+    const res = await axios.post('https://google.serper.dev/search', { q: query, num: 4 }, {
+      headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' }
+    });
+    const snippets = (res.data.organic || []).map(r => `Title: ${r.title}\nSource: ${r.link}\nSnippet: ${r.snippet}`).join('\n\n');
+    return snippets || "No results found.";
+  } catch (e) { return "Search failed: " + e.message; }
+}
+
+// ── Cloud AI Helper (OpenAI / Gemini) ──
+async function cloudGenerate(prompt, systemPrompt, images = [], settings) {
+  const { ai_cloud_provider, ai_cloud_key } = settings;
+  if (!ai_cloud_key) throw new Error('Cloud API key missing in settings.');
+
+  if (ai_cloud_provider === 'openai') {
+    const messages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }];
+    // Handle images if any
+    if (images.length > 0) {
+      messages[1].content = [
+        { type: 'text', text: prompt },
+        ...images.map(img => ({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${img}` } }))
+      ];
+    }
+    const res = await axios.post('https://api.openai.com/v1/chat/completions', {
+      model: 'gpt-4o-mini',
+      messages,
+      max_tokens: 1000,
+    }, { headers: { 'Authorization': `Bearer ${ai_cloud_key}` } });
+    return res.data.choices[0].message.content;
+  } 
+  else if (ai_cloud_provider === 'gemini') {
+    // Basic Gemini implementation
+    const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${ai_cloud_key}`, {
+      contents: [{ role: 'user', parts: [{ text: systemPrompt + "\n\n" + prompt }] }]
+    });
+    return res.data.candidates[0].content.parts[0].text;
+  }
+  throw new Error('Unsupported cloud provider');
+}
+
 // ── Core Ollama fetch helper ──
-// Streams or returns a full response from Ollama
-function ollamaGenerate(prompt, systemPrompt, stream = false) {
+async function ollamaGenerate(prompt, systemPrompt, images = []) {
+  // We'll wrap this in a way that respects the mode
+  const ctx = await getAIContext();
+  const mode = ctx.settings?.ai_mode || 'offline';
+
+  if (mode === 'cloud') {
+    return cloudGenerate(prompt, systemPrompt, images, ctx.settings);
+  }
+
+  let finalSystem = systemPrompt;
+  if (mode === 'hybrid') {
+    const searchResults = await performWebSearch(prompt, ctx.settings?.ai_search_key);
+    finalSystem += `\n\nWEB SEARCH RESULTS (Use these for up-to-date info):\n${searchResults}`;
+  }
+
   return new Promise((resolve, reject) => {
+    // Use vision model if images are provided
+    const model = images.length > 0 ? 'llama3.2-vision' : OLLAMA_MODEL;
     const body = JSON.stringify({
-      model: OLLAMA_MODEL,
+      model,
       prompt,
-      system: systemPrompt,
+      system: finalSystem,
       stream: false,
+      images, // Array of base64 strings
       options: {
         temperature: 0.4,
         num_predict: 600,
@@ -73,11 +185,12 @@ router.get('/status', async (req, res) => {
     });
 
     const modelList = (models.models || []).map(m => m.name);
-    const modelReady = modelList.some(m => m.includes(OLLAMA_MODEL.split(':')[0]));
+    const currentModel = OLLAMA_MODEL;
+    const modelReady = modelList.some(m => m === currentModel || m.split(':')[0] === currentModel.split(':')[0]);
 
     res.json({
       online: true,
-      model: OLLAMA_MODEL,
+      model: currentModel,
       model_ready: modelReady,
       available_models: modelList,
       ollama_url: OLLAMA_URL,
@@ -87,562 +200,677 @@ router.get('/status', async (req, res) => {
   }
 });
 
-// ── RAM / memory stats ──
-// Reads system memory from /proc/meminfo (Linux) and tries to get
-// Ollama process memory via the Docker socket
-router.get('/ram-stats', async (req, res) => {
-  const fs = require('fs');
-  const stats = {
-    system_total_mb: 0,
-    system_used_mb: 0,
-    system_free_mb: 0,
-    system_available_mb: 0,
-    system_percent: 0,
-    ollama_rss_mb: 0,
-    ollama_container_mb: 0,
-    node_heap_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
-    source: 'unavailable',
-  };
-
-  // 1. Read /proc/meminfo for system RAM
-  try {
-    const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
-    const get = key => {
-      const m = meminfo.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm'));
-      return m ? parseInt(m[1]) * 1024 : 0; // kB → bytes
-    };
-    const total = get('MemTotal');
-    const free = get('MemFree');
-    const available = get('MemAvailable');
-    const buffers = get('Buffers');
-    const cached = get('Cached');
-    const used = total - available;
-
-    stats.system_total_mb = Math.round(total / 1024 / 1024);
-    stats.system_free_mb = Math.round(free / 1024 / 1024);
-    stats.system_available_mb = Math.round(available / 1024 / 1024);
-    stats.system_used_mb = Math.round(used / 1024 / 1024);
-    stats.system_percent = total > 0 ? Math.round((used / total) * 100) : 0;
-    stats.source = 'proc';
-  } catch(e) {
-    // /proc/meminfo not available (non-Linux or container without it)
-    stats.source = 'unavailable';
-  }
-
-  // 2. Try to get Ollama container memory via Docker socket
-  try {
-    if (fs.existsSync('/var/run/docker.sock')) {
-      const Docker = require('dockerode');
-      const docker = new Docker({ socketPath: '/var/run/docker.sock' });
-      const containers = await docker.listContainers();
-      const ollamaContainer = containers.find(c =>
-        c.Names.some(n => n.includes('ollama')) || c.Image.includes('ollama')
-      );
-
-      if (ollamaContainer) {
-        const container = docker.getContainer(ollamaContainer.Id);
-        const containerStats = await new Promise((resolve, reject) => {
-          container.stats({ stream: false }, (err, data) => {
-            if (err) reject(err);
-            else resolve(data);
-          });
-        });
-
-        if (containerStats?.memory_stats) {
-          const mem = containerStats.memory_stats;
-          // usage - cache gives actual working set
-          const cache = mem.stats?.cache || mem.stats?.inactive_file || 0;
-          const workingSet = (mem.usage || 0) - cache;
-          stats.ollama_container_mb = Math.round(workingSet / 1024 / 1024);
-          stats.ollama_rss_mb = Math.round((mem.usage || 0) / 1024 / 1024);
-          stats.ollama_container_id = ollamaContainer.Id.slice(0, 12);
-          stats.ollama_container_name = ollamaContainer.Names[0]?.replace('/', '') || 'ollama';
-          if (mem.limit && mem.limit < stats.system_total_mb * 1024 * 1024 * 2) {
-            stats.ollama_limit_mb = Math.round(mem.limit / 1024 / 1024);
-          }
-        }
-      }
-    }
-  } catch(e) {
-    stats.ollama_error = e.message;
-  }
-
-  res.json(stats);
+// ── Install Ollama ──
+router.post('/install', async (req, res) => {
+  const { exec } = require('child_process');
+  res.setHeader('Content-Type', 'text/plain');
+  res.setHeader('Transfer-Encoding', 'chunked');
+  const proc = exec('curl -fsSL https://ollama.com/install.sh | sh');
+  proc.stdout.on('data', d => res.write(d));
+  proc.stderr.on('data', d => res.write(d));
+  proc.on('close', () => res.end());
 });
 
 // ── Pull a model ──
 router.post('/pull-model', async (req, res) => {
   const { model } = req.body;
   const modelName = model || OLLAMA_MODEL;
-
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
   try {
     const url = new URL(`${OLLAMA_URL}/api/pull`);
     const lib = url.protocol === 'https:' ? https : http;
     const body = JSON.stringify({ name: modelName, stream: true });
-
-    const pullReq = lib.request({
-      hostname: url.hostname,
-      port: url.port || 80,
-      path: url.pathname,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
-    }, pullRes => {
+    const pullReq = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, pullRes => {
       pullRes.on('data', chunk => {
-        try {
-          const lines = chunk.toString().split('\n').filter(Boolean);
-          lines.forEach(line => {
-            const data = JSON.parse(line);
-            res.write(`data: ${JSON.stringify(data)}\n\n`);
-          });
-        } catch(e) {}
+        const lines = chunk.toString().split('\n').filter(Boolean);
+        lines.forEach(line => { try { const d = JSON.parse(line); res.write(`data: ${JSON.stringify(d)}\n\n`); } catch(e) {} });
       });
-      pullRes.on('end', () => {
-        res.write(`data: ${JSON.stringify({ status: 'success' })}\n\n`);
-        res.end();
-      });
+      pullRes.on('end', () => { res.write(`data: {"status":"success"}\n\n`); res.end(); });
     });
-    pullReq.on('error', err => {
-      res.write(`data: ${JSON.stringify({ status: 'error', error: err.message })}\n\n`);
-      res.end();
-    });
-    pullReq.write(body);
-    pullReq.end();
+    pullReq.on('error', err => { res.write(`data: {"status":"error","error":"${err.message}"}\n\n`); res.end(); });
+    pullReq.write(body); pullReq.end();
+  } catch(e) { res.write(`data: {"status":"error","error":"${e.message}"}\n\n`); res.end(); }
+});
+
+// ── RAM / memory / GPU stats ──
+router.get('/ram-stats', async (req, res) => {
+  const fs = require('fs');
+  const { execSync } = require('child_process');
+  const stats = {
+    system_total_mb: 0, system_used_mb: 0, system_available_mb: 0,
+    node_heap_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+    ollama_container_mb: 0, ollama_rss_mb: 0,
+    gpu: null,
+    storage: { guides_bytes: 0, models_bytes: 0, training_bytes: 0, count_guides: 0 }
+  };
+
+  // Basic System RAM
+  try {
+    const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
+    const get = key => { const m = meminfo.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm')); return m ? parseInt(m[1]) * 1024 : 0; };
+    const total = get('MemTotal'); const available = get('MemAvailable');
+    stats.system_total_mb = Math.round(total / 1024 / 1024);
+    stats.system_available_mb = Math.round(available / 1024 / 1024);
+    stats.system_used_mb = stats.system_total_mb - stats.system_available_mb;
+  } catch(e) {}
+
+  // GPU Monitoring (Nvidia)
+  try {
+    const nvidia = execSync('nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits', { encoding: 'utf8' });
+    if (nvidia) {
+      const p = nvidia.trim().split(', ');
+      stats.gpu = { type: 'NVIDIA', name: p[0], used_mb: parseInt(p[1]), total_mb: parseInt(p[2]), load: p[3] + '%' };
+    }
   } catch(e) {
-    res.write(`data: ${JSON.stringify({ status: 'error', error: e.message })}\n\n`);
-    res.end();
+    // Try AMD (ROCm)
+    try {
+      const amd = execSync('rocm-smi --showproductname --showmeminfo vram --showuse --json', { encoding: 'utf8' });
+      const d = JSON.parse(amd);
+      const card = Object.values(d)[0];
+      if (card) {
+        stats.gpu = { 
+          type: 'AMD', name: card['Product Name'], 
+          used_mb: Math.round(card['VRAM Total Memory (B)'] - card['VRAM Total Memory Available (B)'] / 1024 / 1024),
+          total_mb: Math.round(card['VRAM Total Memory (B)'] / 1024 / 1024),
+          load: card['GPU use (%)'] + '%'
+        };
+      }
+    } catch(e2) {}
   }
+
+  // Storage Stats
+  try {
+    const g = db.prepare('SELECT COUNT(*) as c, SUM(LENGTH(guide_content)) as s FROM repair_guides WHERE deleted_at IS NULL').get();
+    stats.storage.count_guides = g.c || 0;
+    stats.storage.guides_bytes = g.s || 0;
+
+    const trainPath = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'ai-training.json');
+    if (fs.existsSync(trainPath)) stats.storage.training_bytes = fs.statSync(trainPath).size;
+
+    // Estimate model sizes from Ollama
+    const ourl = new URL(`${OLLAMA_URL}/api/tags`);
+    const ores = await new Promise((resolve) => {
+      const lib = ourl.protocol === 'https:' ? https : http;
+      lib.get(ourl, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({}); } }); }).on('error', () => resolve({}));
+    });
+    if (ores.models) stats.storage.models_bytes = ores.models.reduce((acc, m) => acc + (m.size || 0), 0);
+  } catch(e) {}
+
+  // Docker / Ollama Container
+  try {
+    if (fs.existsSync('/var/run/docker.sock')) {
+      const Docker = require('dockerode');
+      const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+      const containers = await docker.listContainers();
+      const ollama = containers.find(c => c.Image.includes('ollama') || c.Names.some(n => n.includes('ollama')));
+      if (ollama) {
+        const containerStats = await docker.getContainer(ollama.Id).stats({ stream: false });
+        if (containerStats?.memory_stats) {
+          const mem = containerStats.memory_stats;
+          const cache = mem.stats?.cache || 0;
+          stats.ollama_container_mb = Math.round((mem.usage - cache) / 1024 / 1024);
+          stats.ollama_rss_mb = Math.round(mem.usage / 1024 / 1024);
+          stats.ollama_container_name = ollama.Names[0]?.replace('/', '') || 'ollama';
+          if (mem.limit && mem.limit < stats.system_total_mb * 1024 * 1024) stats.ollama_limit_mb = Math.round(mem.limit / 1024 / 1024);
+        }
+      }
+    }
+  } catch(e) {}
+  res.json(stats);
+});
+
+// ── NEW: AI CHAT / TRAINING PLAYGROUND ──
+router.post('/chat', async (req, res) => {
+  const { message, history } = req.body;
+  if (!message) return res.status(400).json({ error: 'message required' });
+
+  // ── 🔍 Intelligent Search Context ──
+  let searchContext = '';
+  try {
+    const q = message.trim();
+    const words = q.split(/\s+/).filter(w => w.length > 2 && !['the', 'and', 'for', 'can', 'you', 'find', 'with', 'this'].includes(w.toLowerCase()));
+    const searchTerms = [q, ...words];
+    let foundCustomers = []; let foundRepairs = []; let foundInvoices = [];
+    for (const term of searchTerms) {
+      if (foundCustomers.length < 5) {
+        const c = db.prepare(`SELECT * FROM customers WHERE deleted_at IS NULL AND (name LIKE ? OR phone LIKE ? OR email LIKE ?) LIMIT 3`).all(`%${term}%`, `%${term}%`, `%${term}%`);
+        c.forEach(x => { if (!foundCustomers.find(f => f.id === x.id)) foundCustomers.push(x); });
+      }
+      if (foundRepairs.length < 5) {
+        const r = db.prepare(`SELECT r.*, c.name as customer_name FROM repairs r JOIN customers c ON r.customer_id=c.id WHERE r.deleted_at IS NULL AND (r.title LIKE ? OR r.serial_number LIKE ? OR r.device_model LIKE ? OR c.name LIKE ?) LIMIT 3`).all(`%${term}%`, `%${term}%`, `%${term}%`, `%${term}%`);
+        r.forEach(x => { if (!foundRepairs.find(f => f.id === x.id)) foundRepairs.push(x); });
+      }
+      if (foundInvoices.length < 5) {
+        const i = db.prepare(`SELECT i.*, c.name as customer_name FROM invoices i JOIN customers c ON i.customer_id=c.id WHERE i.deleted_at IS NULL AND (i.invoice_number LIKE ? OR c.name LIKE ?) LIMIT 3`).all(`%${term}%`, `%${term}%`);
+        i.forEach(x => { if (!foundInvoices.find(f => f.id === x.id)) foundInvoices.push(x); });
+      }
+    }
+    if (foundCustomers.length > 0) {
+      searchContext += "\nCustomers found:\n" + foundCustomers.slice(0, 3).map(c => {
+        const notes = db.prepare('SELECT notes FROM customer_notes WHERE customer_id=? ORDER BY created_at DESC LIMIT 3').all(c.id);
+        const calls = db.prepare('SELECT notes, outcome FROM call_logs WHERE customer_id=? ORDER BY created_at DESC LIMIT 3').all(c.id);
+        const comms = db.prepare('SELECT subject, direction FROM communications WHERE customer_id=? ORDER BY created_at DESC LIMIT 3').all(c.id);
+        let detail = `- ${c.name} (Phone: ${c.phone}, Email: ${c.email})`;
+        if (notes.length > 0) detail += `\n  Notes: ${notes.map(n => n.notes).join(' | ')}`;
+        if (calls.length > 0) detail += `\n  Call History: ${calls.map(cl => `${cl.notes} (${cl.outcome})`).join(' | ')}`;
+        if (comms.length > 0) detail += `\n  Recent Emails: ${comms.map(cm => `[${cm.direction}] ${cm.subject}`).join(' | ')}`;
+        return detail;
+      }).join('\n');
+    }
+    if (foundRepairs.length > 0) {
+      searchContext += "\nRepairs found:\n" + foundRepairs.slice(0, 3).map(r => {
+        const photos = db.prepare('SELECT caption, stage FROM repair_photos WHERE repair_id=? AND caption IS NOT NULL AND caption != ""').all(r.id);
+        let detail = `- ${r.title} for ${r.customer_name} (Status: ${r.status}, S/N: ${r.serial_number})`;
+        if (photos.length > 0) detail += `\n  Photo documentation: ${photos.map(p => `${p.stage}: ${p.caption}`).join(' | ')}`;
+        return detail;
+      }).join('\n');
+    }
+  } catch (e) {}
+
+  const ctx = await getAIContext();
+  const system = `You are a helpful AI assistant for ${ctx.shop_name}, an IT repair shop. Version 11.0.0.
+Shop Policy & Capability:
+${ctx.shop_info}
+
+Use the following context to help answer questions and maintain the shop's personality:
+${ctx.training_context}
+${searchContext ? `\nDatabase Information relevant to the user's message:\n${searchContext}` : ''}
+
+Always format phone numbers in the style XXX-XXX-XXXX.
+Be helpful, professional, and concise. When providing info from the database, be specific with names and numbers.
+
+DOWNLOAD & RESEARCH CAPABILITY:
+If a user asks you to "download", "research", or "save" a specific technical manual, schematic, or image from a URL, or if you find a highly relevant direct file link during a web search that would help future repairs, you can suggest that the user let you "Download and Learn" it. 
+You have access to a background tool that can OCR images and parse PDFs to add them to your permanent Knowledge Base.
+`;
+
+  let prompt = message;
+  if (history && history.length > 0) prompt = history.map(h => `${h.role === 'user' ? 'User' : 'AI'}: ${h.content}`).join('\n') + `\nUser: ${message}`;
+
+  try {
+    const response = await ollamaGenerate(prompt, system);
+    res.json({ result: response, model: OLLAMA_MODEL });
+  } catch(e) { res.status(503).json({ error: e.message }); }
 });
 
 // ── 1. REPAIR DIAGNOSIS ──
-router.post('/diagnose', async (req, res) => {
+router.post('/diagnose', upload.single('image'), async (req, res) => {
   const { device_type, device_brand, device_model, symptoms, existing_notes } = req.body;
   if (!symptoms) return res.status(400).json({ error: 'symptoms required' });
 
-  // Pull relevant inventory for context
+  const images = [];
+  if (req.file) images.push(req.file.buffer.toString('base64'));
+
+  const ctx = await getAIContext();
   const parts = db.prepare('SELECT name, sku, quantity, category FROM inventory WHERE quantity > 0 ORDER BY category, name').all();
-  const partsContext = parts.length > 0
-    ? `Available parts in inventory:\n${parts.map(p => `- ${p.name}${p.sku ? ` (${p.sku})` : ''} — ${p.quantity} in stock`).join('\n')}`
-    : 'No inventory data available.';
+  const partsContext = parts.length > 0 ? `Available parts in inventory:\n${parts.map(p => `- ${p.name} — ${p.quantity} in stock`).join('\n')}` : 'No inventory data.';
 
-  const system = `You are an expert IT repair technician assistant. You help diagnose computer and device issues and suggest repair steps. Be concise and practical. Format your response with clear sections.`;
-
-  const prompt = `Device: ${[device_type, device_brand, device_model].filter(Boolean).join(' ') || 'Unknown device'}
-Reported symptoms: ${symptoms}
-${existing_notes ? `Existing notes: ${existing_notes}` : ''}
-
-${partsContext}
-
-Please provide:
-1. LIKELY CAUSES (top 3, most likely first)
-2. RECOMMENDED DIAGNOSTIC STEPS (numbered, in order)
-3. PROBABLE REPAIR STEPS (once diagnosed)
-4. PARTS THAT MAY BE NEEDED (reference inventory above if applicable)
-5. ESTIMATED TIME (rough estimate)
-
-Keep it practical and direct.`;
+  const system = `You are an expert IT repair technician assistant for ${ctx.shop_name}. Help diagnose issues. Format response with sections. ${images.length > 0 ? 'Analyze attached image to help diagnosis.' : ''}`;
+  const prompt = `Device: ${[device_type, device_brand, device_model].filter(Boolean).join(' ') || 'Unknown'}\nSymptoms: ${symptoms}\n${existing_notes ? `Notes: ${existing_notes}` : ''}\n\n${partsContext}`;
 
   try {
-    const response = await ollamaGenerate(prompt, system);
-    res.json({ result: response, model: OLLAMA_MODEL });
-  } catch(e) {
-    res.status(503).json({ error: e.message });
-  }
+    const response = await ollamaGenerate(prompt, system, images);
+    res.json({ result: response, model: images.length > 0 ? 'llama3.2-vision' : OLLAMA_MODEL });
+  } catch(e) { res.status(503).json({ error: e.message }); }
 });
 
-// ── 2. FORMAT REPAIR NOTES ──
+// ── 2. FORMAT REPAIR NOTES & EXPAND SHORTHAND ──
 router.post('/format-notes', async (req, res) => {
   const { raw_notes, device_type, repair_title } = req.body;
   if (!raw_notes) return res.status(400).json({ error: 'raw_notes required' });
+  const ctx = await getAIContext();
+  const system = `You are a professional IT repair shop assistant for ${ctx.shop_name}. 
+Your job is to expand shorthand/abbreviations and reformat rough technician notes into clean, professional documentation.
 
-  const system = `You are a professional IT repair shop assistant. Your job is to reformat rough technician notes into clean, professional repair documentation. Keep all the facts but improve clarity, grammar, and structure. Use professional but plain language — no jargon overload.`;
+${ctx.system_context_only ? `IMPORTANT SHORTHAND & RULES FROM USER:\n${ctx.system_context_only}\n` : ''}
 
-  const prompt = `Repair: ${repair_title || 'IT Repair'}
-Device: ${device_type || 'Device'}
+RULES:
+1. Expand all shorthand (e.g., "cust" -> "customer", "ssd" -> "Solid State Drive" if appropriate, etc.).
+2. Use the shorthand mappings provided in the context above.
+3. Format all phone numbers to the style XXX-XXX-XXXX (e.g., 3333333333 becomes 333-333-3333).
+4. Keep all factual data, serial numbers, and technical details.
+5. Improve grammar and clarity while remaining concise.
+6. Do not add information that wasn't in the original notes.`;
 
-Raw technician notes to reformat:
-"${raw_notes}"
-
-Please reformat these into clean professional repair notes. Include:
-- What was found/diagnosed
-- What was done (steps taken)
-- Parts used (if mentioned)
-- Current status / outcome
-
-Keep it factual and concise. Write in past tense. Do not add information that wasn't in the original notes.`;
-
+  const prompt = `Repair: ${repair_title || 'General'}\nDevice: ${device_type || 'Device'}\n\nRough notes to expand and format:\n"${raw_notes}"`;
   try {
     const response = await ollamaGenerate(prompt, system);
     res.json({ result: response, model: OLLAMA_MODEL });
-  } catch(e) {
-    res.status(503).json({ error: e.message });
-  }
+  } catch(e) { res.status(503).json({ error: e.message }); }
 });
 
 // ── 3. CUSTOMER MESSAGE DRAFT ──
 router.post('/customer-message', async (req, res) => {
   const { repair_id, message_type } = req.body;
-  if (!repair_id) return res.status(400).json({ error: 'repair_id required' });
-
-  const repair = db.prepare(`SELECT r.*, c.name as customer_name, c.phone as customer_phone, c.email as customer_email
-    FROM repairs r JOIN customers c ON r.customer_id=c.id WHERE r.id=?`).get(repair_id);
+  const repair = db.prepare(`SELECT r.*, c.name as customer_name FROM repairs r JOIN customers c ON r.customer_id=c.id WHERE r.id=?`).get(repair_id);
   if (!repair) return res.status(404).json({ error: 'Repair not found' });
-
-  const settings = db.prepare('SELECT company_name, phone FROM settings WHERE id=1').get();
-
-  const statusMessages = {
-    intake: 'we have received their device and will begin diagnostics soon',
-    diagnosing: 'we are currently diagnosing their device',
-    waiting_parts: 'we have diagnosed the issue and are waiting for parts to arrive',
-    in_repair: 'we are currently working on their repair',
-    ready: 'their device is repaired and ready for pickup',
-    completed: 'their repair has been completed',
-    cancelled: 'their repair has been cancelled',
-  };
-
-  const system = `You are a friendly, professional customer service assistant for an IT repair shop. Write short, clear messages that are warm but not overly casual. Keep messages under 100 words unless it's an explanation message.`;
-
-  const type = message_type || 'status_update';
-  const typeInstructions = {
-    status_update: 'Write a brief status update SMS/text message',
-    ready_pickup: 'Write a pickup notification message — device is ready',
-    follow_up: 'Write a friendly follow-up message checking if everything is working well after the repair',
-    estimate_approval: 'Write a message asking the customer to approve the repair estimate before we proceed',
-    delay_notice: 'Write a polite message explaining there is a short delay with their repair',
-  };
-
-  const prompt = `Shop name: ${settings?.company_name || 'Our Shop'}
-Shop phone: ${settings?.phone || ''}
-Customer name: ${repair.customer_name}
-Device: ${[repair.device_brand, repair.device_model].filter(Boolean).join(' ') || repair.device_type || 'their device'}
-Repair title: ${repair.title}
-Current status: ${repair.status} (meaning ${statusMessages[repair.status] || repair.status})
-${repair.repair_notes ? `Tech notes summary: ${repair.repair_notes.slice(0, 200)}` : ''}
-
-Task: ${typeInstructions[type] || typeInstructions.status_update}
-
-Write the message only — no subject line, no explanation, just the message text ready to send.`;
-
+  const ctx = await getAIContext();
+  const system = `Friendly customer service assistant for ${ctx.shop_name}.`;
+  const prompt = `Draft a ${message_type || 'status_update'} message for ${repair.customer_name}. Status: ${repair.status}. Write message only.`;
   try {
     const response = await ollamaGenerate(prompt, system);
-    res.json({ result: response.trim(), model: OLLAMA_MODEL, customer_name: repair.customer_name, customer_phone: repair.customer_phone, customer_email: repair.customer_email });
-  } catch(e) {
-    res.status(503).json({ error: e.message });
-  }
+    res.json({ result: response.trim(), model: OLLAMA_MODEL });
+  } catch(e) { res.status(503).json({ error: e.message }); }
 });
 
 // ── 4. INVENTORY REORDER SUGGESTIONS ──
 router.post('/reorder-suggestions', async (req, res) => {
-  // Get inventory with transaction history
   const items = db.prepare('SELECT * FROM inventory ORDER BY category, name').all();
-
-  if (items.length === 0) return res.json({ result: 'No inventory items found. Add parts to your inventory first.', model: OLLAMA_MODEL });
-
-  // Get usage in last 30 and 90 days
-  const thirtyDaysAgo = new Date(); thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-  const ninetyDaysAgo = new Date(); ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-
-  const usageMap = {};
-  items.forEach(item => {
-    const used30 = db.prepare(`SELECT COALESCE(SUM(ABS(quantity_change)),0) as total FROM inventory_transactions
-      WHERE inventory_id=? AND type='remove' AND created_at >= ?`).get(item.id, thirtyDaysAgo.toISOString()).total;
-    const used90 = db.prepare(`SELECT COALESCE(SUM(ABS(quantity_change)),0) as total FROM inventory_transactions
-      WHERE inventory_id=? AND type='remove' AND created_at >= ?`).get(item.id, ninetyDaysAgo.toISOString()).total;
-    usageMap[item.id] = { used30, used90 };
-  });
-
-  const inventoryContext = items.map(item => {
-    const u = usageMap[item.id];
-    return `${item.name} | Stock: ${item.quantity} | Min: ${item.quantity_min} | Used (30d): ${u.used30} | Used (90d): ${u.used90} | Cost: $${item.unit_cost || 0}${item.supplier ? ` | Supplier: ${item.supplier}` : ''}`;
-  }).join('\n');
-
-  const system = `You are an inventory management expert for an IT repair shop. Analyze stock levels and usage patterns to give practical reorder recommendations.`;
-
-  const prompt = `Current inventory for an IT repair shop:
-Name | Current Stock | Min Level | Used Last 30 Days | Used Last 90 Days | Unit Cost | Supplier
-
-${inventoryContext}
-
-Today's date: ${new Date().toLocaleDateString()}
-
-Please analyze this and provide:
-1. URGENT REORDER (out of stock or critically low based on usage rate)
-2. SOON TO REORDER (will run out within 2-3 weeks at current usage rate)
-3. WELL STOCKED (no action needed)
-4. SLOW MOVERS (high stock, very low usage — consider reducing order quantities)
-
-For each reorder item, suggest a quantity to order based on usage patterns. Be practical and specific.`;
-
+  const ctx = await getAIContext();
+  const system = `Inventory analyst for ${ctx.shop_name}. Analyze stock and give reorder advice.`;
+  const prompt = `Inventory:\n${items.map(i => `${i.name} | Stock: ${i.quantity} | Min: ${i.quantity_min}`).join('\n')}`;
   try {
     const response = await ollamaGenerate(prompt, system);
     res.json({ result: response, model: OLLAMA_MODEL });
-  } catch(e) {
-    res.status(503).json({ error: e.message });
-  }
+  } catch(e) { res.status(503).json({ error: e.message }); }
 });
 
 // ── 5. BUSINESS INSIGHTS ──
 router.post('/insights', async (req, res) => {
-  const { period } = req.body; // 'week' | 'month' | 'year'
-  const p = period || 'month';
-
-  const now = new Date();
-  let start;
-  if (p === 'week') { start = new Date(now); start.setDate(start.getDate() - 7); }
-  else if (p === 'month') { start = new Date(now.getFullYear(), now.getMonth(), 1); }
-  else { start = new Date(now.getFullYear(), 0, 1); }
-
-  const startStr = start.toISOString();
-
-  // Gather all the stats
-  const totalRepairs = db.prepare('SELECT COUNT(*) as c FROM repairs WHERE created_at >= ?').get(startStr).c;
-  const completedRepairs = db.prepare("SELECT COUNT(*) as c FROM repairs WHERE status='completed' AND created_at >= ?").get(startStr).c;
-  const revenue = db.prepare("SELECT COALESCE(SUM(total),0) as t FROM invoices WHERE status='paid' AND issued_date >= ?").get(startStr).t;
-  const newCustomers = db.prepare('SELECT COUNT(*) as c FROM customers WHERE created_at >= ?').get(startStr).c;
-  const openRepairs = db.prepare("SELECT COUNT(*) as c FROM repairs WHERE status NOT IN ('completed','cancelled')").get().c;
-  const lowStock = db.prepare('SELECT COUNT(*) as c FROM inventory WHERE quantity <= quantity_min').get().c;
-  const pendingReminders = db.prepare("SELECT COUNT(*) as c FROM reminders WHERE status='pending'").get().c;
-  const pendingInvoices = db.prepare("SELECT COUNT(*) as c FROM invoices WHERE status IN ('draft','sent')").get().c;
-
-  // Status breakdown
-  const statuses = ['intake','diagnosing','waiting_parts','in_repair','ready'];
-  const statusBreakdown = statuses.map(s => {
-    const count = db.prepare('SELECT COUNT(*) as c FROM repairs WHERE status=?').get(s).c;
-    return `${s.replace('_',' ')}: ${count}`;
-  }).join(', ');
-
-  // Most common device types
-  const deviceTypes = db.prepare(`SELECT device_type, COUNT(*) as c FROM repairs WHERE created_at >= ? AND device_type != '' GROUP BY device_type ORDER BY c DESC LIMIT 5`).all(startStr);
-
-  // Most common repair titles
-  const commonRepairs = db.prepare(`SELECT title, COUNT(*) as c FROM repairs WHERE created_at >= ? GROUP BY title ORDER BY c DESC LIMIT 5`).all(startStr);
-
-  // Previous period for comparison
-  let prevStart;
-  if (p === 'week') { prevStart = new Date(start); prevStart.setDate(prevStart.getDate() - 7); }
-  else if (p === 'month') { prevStart = new Date(now.getFullYear(), now.getMonth() - 1, 1); }
-  else { prevStart = new Date(now.getFullYear() - 1, 0, 1); }
-
-  const prevRepairs = db.prepare('SELECT COUNT(*) as c FROM repairs WHERE created_at >= ? AND created_at < ?').get(prevStart.toISOString(), startStr).c;
-  const prevRevenue = db.prepare("SELECT COALESCE(SUM(total),0) as t FROM invoices WHERE status='paid' AND issued_date >= ? AND issued_date < ?").get(prevStart.toISOString(), startStr).t;
-
-  const system = `You are a business analyst for a small IT repair shop. Provide clear, actionable insights in plain English. Be encouraging but honest. Focus on what matters most to a small business owner. Keep it to 3-4 paragraphs max.`;
-
-  const prompt = `IT Repair Shop — ${p === 'week' ? 'Last 7 Days' : p === 'month' ? 'This Month' : 'This Year'} Business Summary
-
-PERFORMANCE:
-- New repairs: ${totalRepairs} (vs ${prevRepairs} previous ${p})
-- Completed repairs: ${completedRepairs}
-- Revenue collected: $${revenue.toFixed(2)} (vs $${prevRevenue.toFixed(2)} previous ${p})
-- New customers: ${newCustomers}
-
-CURRENT STATUS:
-- Open repairs: ${openRepairs} (breakdown: ${statusBreakdown})
-- Pending invoices: ${pendingInvoices}
-- Pending reminders: ${pendingReminders}
-- Low/out of stock parts: ${lowStock}
-
-TOP DEVICE TYPES THIS PERIOD:
-${deviceTypes.map(d => `- ${d.device_type}: ${d.c} repairs`).join('\n') || '- No data yet'}
-
-TOP REPAIR TYPES THIS PERIOD:
-${commonRepairs.map(r => `- ${r.title}: ${r.c} times`).join('\n') || '- No data yet'}
-
-Please write a brief business summary with:
-1. How the period went overall (growth/decline vs previous period)
-2. What's working well
-3. What needs attention (open repairs, low stock, pending items)
-4. One practical suggestion based on the data
-
-Write it like you're briefing the shop owner directly. Use plain English, no bullet points in your response — write in paragraphs.`;
-
+  const { period } = req.body;
+  const ctx = await getAIContext();
+  const system = `Business analyst for ${ctx.shop_name}. Provide actionable insights.`;
+  const prompt = `Generate business summary for period: ${period || 'month'}`;
   try {
     const response = await ollamaGenerate(prompt, system);
-    res.json({ result: response, model: OLLAMA_MODEL, stats: { totalRepairs, completedRepairs, revenue, newCustomers, openRepairs, lowStock } });
-  } catch(e) {
-    res.status(503).json({ error: e.message });
+    res.json({ result: response, model: OLLAMA_MODEL });
+  } catch(e) { res.status(503).json({ error: e.message }); }
+});
+
+// ── 6. REPAIR GUIDES & KNOWLEDGE BASE ──
+router.get('/guides', (req, res) => {
+  const { brand, model, q, type, source, include_deleted } = req.query;
+  const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+  const kbPath = path.join(uploadsBase, 'knowledge-base');
+  if (!fs.existsSync(kbPath)) fs.mkdirSync(kbPath, { recursive: true });
+
+  // 1. Get guides from DB
+  let sql = 'SELECT * FROM repair_guides WHERE 1=1';
+  let params = [];
+  if (include_deleted !== '1') sql += ' AND deleted_at IS NULL';
+  else sql += ' AND deleted_at IS NOT NULL';
+
+  if (brand) { sql += ' AND device_brand LIKE ?'; params.push(`%${brand}%`); }
+  if (model) { sql += ' AND device_model LIKE ?'; params.push(`%${model}%`); }
+  if (type) { sql += ' AND issue LIKE ?'; params.push(`%${type}%`); }
+  if (source) { sql += ' AND source_url LIKE ?'; params.push(`%${source}%`); }
+  if (q) { sql += ' AND (device_brand LIKE ? OR device_model LIKE ? OR issue LIKE ? OR guide_content LIKE ?)'; params.push(`%${q}%`, `%${q}%`, `%${q}%`, `%${q}%`); }
+  
+  const dbGuides = db.prepare(sql).all(...params).map(g => ({ ...g, source_type: 'AI Generated' }));
+
+  // 2. Get learned documents from Disk (Knowledge Base)
+  let diskGuides = [];
+  try {
+    const files = fs.readdirSync(kbPath);
+    files.forEach(filename => {
+      const isDeleted = filename.endsWith('.deleted');
+      if ((include_deleted === '1' && !isDeleted) || (include_deleted !== '1' && isDeleted)) return;
+
+      const parts = filename.replace('.learned', '').replace('.deleted', '').split('_');
+      const timestamp = parts[0];
+      const name = parts.slice(1).join(' ').toUpperCase() || filename;
+      
+      let content = '';
+      try { content = fs.readFileSync(path.join(kbPath, filename), 'utf8'); } catch(e) {}
+      
+      if (q && !name.toLowerCase().includes(q.toLowerCase()) && !content.toLowerCase().includes(q.toLowerCase())) return;
+      if (brand && !name.toLowerCase().includes(brand.toLowerCase())) return;
+
+      diskGuides.push({
+        id: 'file:' + filename,
+        device_brand: 'Technical Doc',
+        device_model: name,
+        issue: 'Manual/Schematic',
+        guide_content: content,
+        source_url: 'Knowledge Base',
+        source_type: 'Technical Documentation',
+        created_at: new Date(parseInt(timestamp) || Date.now()).toISOString(),
+        is_disk_file: true
+      });
+    });
+  } catch(e) {}
+
+  const allGuides = [...dbGuides, ...diskGuides].sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+  res.json(allGuides.slice(0, 100));
+});
+
+router.post('/guides', upload.single('file'), async (req, res) => {
+  const { brand, model, issue, content, source } = req.body;
+  let finalContent = content;
+  if (req.file) finalContent = req.file.buffer.toString('utf8');
+  if (!finalContent) return res.status(400).json({ error: 'Content required' });
+  
+  const id = uuidv4();
+  db.prepare('INSERT INTO repair_guides (id, device_brand, device_model, issue, guide_content, source_url) VALUES (?,?,?,?,?,?)')
+    .run(id, brand || 'General', model || 'Universal', issue || 'Manual Upload', finalContent, source || 'Manual');
+  res.json({ ok: true, id });
+});
+
+router.delete('/guides/:id', (req, res) => {
+  const { id } = req.params;
+  if (id.startsWith('file:')) {
+    const filename = id.replace('file:', '');
+    const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const oldPath = path.join(uploadsBase, 'knowledge-base', filename);
+    const newPath = oldPath + '.deleted';
+    if (fs.existsSync(oldPath)) fs.renameSync(oldPath, newPath);
+  } else {
+    db.prepare('UPDATE repair_guides SET deleted_at = CURRENT_TIMESTAMP WHERE id=?').run(id);
+  }
+  res.json({ ok: true });
+});
+
+router.post('/guides/:id/restore', (req, res) => {
+  const { id } = req.params;
+  if (id.startsWith('file:')) {
+    const filename = id.replace('file:', '');
+    const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const oldPath = path.join(uploadsBase, 'knowledge-base', filename);
+    const newPath = oldPath.replace('.deleted', '');
+    if (fs.existsSync(oldPath)) fs.renameSync(oldPath, newPath);
+  } else {
+    db.prepare('UPDATE repair_guides SET deleted_at = NULL WHERE id=?').run(id);
+  }
+  res.json({ ok: true });
+});
+
+router.get('/guides/:id/download', (req, res) => {
+  const { id } = req.params;
+  if (id.startsWith('file:')) {
+    const filename = id.replace('file:', '');
+    const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const filePath = path.join(uploadsBase, 'knowledge-base', filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
+    res.download(filePath);
+  } else {
+    const g = db.prepare('SELECT * FROM repair_guides WHERE id=?').get(id);
+    if (!g) return res.status(404).json({ error: 'Not found' });
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Disposition', `attachment; filename="${g.device_brand}-${g.device_model}.txt"`);
+    res.send(g.guide_content);
   }
 });
 
-module.exports = router;
+router.post('/generate-guide', async (req, res) => {
+  const { brand, model, issue, device_type } = req.body;
+  if (!issue) return res.status(400).json({ error: 'Issue required' });
 
-// ── USER PREFERENCES (per-user settings including dark mode) ──
+  try {
+    const guide = await generateRepairGuide(brand, model, issue, device_type);
+    res.json({ ok: true, guide });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+async function generateRepairGuide(brand, model, issue, deviceType) {
+  const ctx = await getAIContext();
+  const system = `You are a professional IT repair engineer. Generate a comprehensive repair guide or diagnostic flowchart.
+Include sections for: Tools Needed, Safety Precautions, Diagnostic Steps, and Repair Procedure.
+If schematics information is available, mention key test points.`;
+  
+  const prompt = `Generate a detailed repair guide for:
+Device: ${deviceType || ''} ${brand || ''} ${model || ''}
+Issue: ${issue}
+
+Format the output in clean Markdown.`;
+
+  // Always use Hybrid/Search for guides if possible
+  const originalMode = ctx.settings?.ai_mode;
+  const searchKey = ctx.settings?.ai_search_key;
+  
+  // Temporarily force hybrid if we have a search key to get accurate data
+  let finalSystem = system;
+  if (searchKey) {
+    const searchResults = await performWebSearch(`${brand} ${model} ${issue} repair guide schematics`, searchKey);
+    finalSystem += `\n\nWEB RESEARCH RESULTS:\n${searchResults}`;
+  }
+
+  const response = await ollamaGenerate(prompt, finalSystem);
+  
+  // Save to DB
+  db.prepare('INSERT INTO repair_guides (id, device_brand, device_model, issue, guide_content) VALUES (?,?,?,?,?)')
+    .run(uuidv4(), brand || '', model || '', issue, response);
+    
+  return response;
+}
+
+// ── PREFS & TRAINING ──
 router.get('/prefs', (req, res) => {
   try {
     let prefs = db.prepare('SELECT * FROM user_preferences WHERE user_id=?').get(req.user.id);
-    if (!prefs) {
-      const globalSettings = db.prepare('SELECT dark_mode FROM settings WHERE id=1').get();
-      return res.json({ user_id: req.user.id, dark_mode: globalSettings?.dark_mode || 0, preferences: {} });
-    }
-    let parsed = {};
-    try { parsed = JSON.parse(prefs.preferences || '{}'); } catch(e) {}
-    res.json({ ...prefs, preferences: parsed });
-  } catch(e) {
-    res.json({ user_id: req.user.id, dark_mode: 0, preferences: {} });
-  }
+    if (!prefs) return res.json({ user_id: req.user.id, dark_mode: 0, preferences: {} });
+    res.json({ ...prefs, preferences: JSON.parse(prefs.preferences || '{}') });
+  } catch(e) { res.json({ user_id: req.user.id, dark_mode: 0, preferences: {} }); }
 });
 
 router.put('/prefs', (req, res) => {
+  const { dark_mode, preferences } = req.body;
+  const existing = db.prepare('SELECT id FROM user_preferences WHERE user_id=?').get(req.user.id);
+  if (existing) db.prepare('UPDATE user_preferences SET dark_mode=?, preferences=? WHERE user_id=?').run(dark_mode?1:0, JSON.stringify(preferences || {}), req.user.id);
+  else db.prepare('INSERT INTO user_preferences (id, user_id, dark_mode, preferences) VALUES (?,?,?,?)').run(require('uuid').v4(), req.user.id, dark_mode?1:0, JSON.stringify(preferences || {}));
+  res.json({ ok: true });
+});
+
+router.get('/training', (req, res) => {
+  const trainPath = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'ai-training.json');
+  if (require('fs').existsSync(trainPath)) return res.json(JSON.parse(require('fs').readFileSync(trainPath, 'utf8')));
+  res.json({ examples: [], system_context: '' });
+});
+
+router.post('/training', (req, res) => {
+  const uploadsPath = process.env.UPLOADS_PATH || '/data/uploads';
+  if (!require('fs').existsSync(uploadsPath)) require('fs').mkdirSync(uploadsPath, { recursive: true });
+  require('fs').writeFileSync(path.join(uploadsPath, 'ai-training.json'), JSON.stringify({ ...req.body, last_updated: new Date().toISOString() }, null, 2));
+  res.json({ ok: true });
+});
+
+router.post('/training/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
-    const { v4: uuidv4 } = require('uuid');
-    const { dark_mode, preferences } = req.body;
-    const prefsStr = JSON.stringify(preferences || {});
-    const darkVal = dark_mode ? 1 : 0;
-    const existing = db.prepare('SELECT id FROM user_preferences WHERE user_id=?').get(req.user.id);
-    if (existing) {
-      db.prepare('UPDATE user_preferences SET dark_mode=?, preferences=? WHERE user_id=?')
-        .run(darkVal, prefsStr, req.user.id);
-    } else {
-      db.prepare('INSERT INTO user_preferences (id, user_id, dark_mode, preferences) VALUES (?,?,?,?)')
-        .run(uuidv4(), req.user.id, darkVal, prefsStr);
+    let text = '';
+    const mimeType = req.file.mimetype;
+
+    if (mimeType === 'application/pdf') {
+      const data = await pdf(req.file.buffer);
+      text = data.text;
+    } 
+    else if (mimeType.startsWith('image/')) {
+      const result = await Tesseract.recognize(req.file.buffer, 'eng');
+      text = result.data.text;
     }
-    res.json({ ok: true, dark_mode: darkVal });
+    else {
+      text = req.file.buffer.toString('utf8');
+    }
+
+    if (!text.trim()) throw new Error('No text content found in file');
+
+    const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const kbPath = path.join(uploadsBase, 'knowledge-base');
+    if (!fs.existsSync(kbPath)) fs.mkdirSync(kbPath, { recursive: true });
+
+    // Save as a permanent learned document
+    const safeName = req.file.originalname.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const saveName = `${Date.now()}_${safeName}.learned`;
+    fs.writeFileSync(path.join(kbPath, saveName), text);
+
+    res.json({ ok: true, learned_as: saveName });
+  } catch(e) { 
+    console.error('[AI Training Upload] Error:', e);
+    res.status(500).json({ error: e.message }); 
+  }
+});
+
+// ── 7. DOWNLOAD TOOL ──
+router.post('/download-tool', async (req, res) => {
+  const { url, type } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL required' });
+
+  try {
+    const response = await axios.get(url, { responseType: 'arraybuffer' });
+    const buffer = Buffer.from(response.data);
+    const contentType = response.headers['content-type'];
+    const originalName = url.split('/').pop().split('?')[0] || 'downloaded_file';
+    
+    let text = '';
+    if (contentType === 'application/pdf' || originalName.endsWith('.pdf')) {
+      const data = await pdf(buffer);
+      text = data.text;
+    } else if (contentType.startsWith('image/')) {
+      const result = await Tesseract.recognize(buffer, 'eng');
+      text = result.data.text;
+    } else {
+      text = buffer.toString('utf8');
+    }
+
+    if (!text.trim()) throw new Error('Could not extract text from downloaded file');
+
+    const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const kbPath = path.join(uploadsBase, 'knowledge-base');
+    if (!fs.existsSync(kbPath)) fs.mkdirSync(kbPath, { recursive: true });
+
+    const safeName = originalName.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+    const saveName = `${Date.now()}_${safeName}.learned`;
+    fs.writeFileSync(path.join(kbPath, saveName), text);
+
+    res.json({ ok: true, learned_as: saveName, source: url });
   } catch(e) {
+    console.error('[AI Download Tool] Error:', e);
     res.status(500).json({ error: e.message });
   }
 });
 
-// ── AI MODEL TRAINING DATA ──
-// Save custom training examples for fine-tuning context
-router.get('/training', (req, res) => {
-  try {
-    const path = require('path');
-    const fs = require('fs');
-    const trainPath = path.join(process.env.UPLOADS_PATH || '/data/uploads', 'ai-training.json');
-    if (fs.existsSync(trainPath)) {
-      return res.json(JSON.parse(fs.readFileSync(trainPath, 'utf8')));
-    }
-  } catch(e) {}
-  res.json({ examples: [], system_context: '', last_updated: null });
+// ── OLLAMA MODEL MANAGEMENT ──
+router.post('/models/upload', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No model file provided' });
+  const modelDir = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'custom-models');
+  if (!fs.existsSync(modelDir)) fs.mkdirSync(modelDir, { recursive: true });
+  
+  const savePath = path.join(modelDir, req.file.originalname);
+  fs.writeFileSync(savePath, req.file.buffer);
+  res.json({ ok: true, path: savePath, name: req.file.originalname });
 });
 
-router.post('/training', (req, res) => {
-  const { examples, system_context } = req.body;
-  const path = require('path');
-  const fs = require('fs');
-  const uploadsPath = process.env.UPLOADS_PATH || '/data/uploads';
-  if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
-  const trainPath = path.join(uploadsPath, 'ai-training.json');
-  const data = { examples: examples || [], system_context: system_context || '', last_updated: new Date().toISOString() };
-  fs.writeFileSync(trainPath, JSON.stringify(data, null, 2));
-  res.json({ ok: true, examples_count: (examples || []).length });
+router.post('/models/create', async (req, res) => {
+  const { name, filePath } = req.body;
+  if (!name || !filePath) return res.status(400).json({ error: 'Name and filePath required' });
+
+  const modelfileContent = `FROM ${filePath}`;
+  const modelfilePath = filePath + '.modelfile';
+  fs.writeFileSync(modelfilePath, modelfileContent);
+
+  const { spawn } = require('child_process');
+  const proc = spawn('ollama', ['create', name, '-f', modelfilePath]);
+  
+  proc.on('close', (code) => {
+    fs.unlinkSync(modelfilePath); // Cleanup modelfile
+    if (code === 0) res.json({ ok: true });
+    else res.status(500).json({ error: 'Ollama create failed' });
+  });
 });
 
-// ── CHECK FOR OLLAMA UPDATES ──
 router.get('/model-updates', async (req, res) => {
-  const https = require('https');
-  const http = require('http');
-  const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama:11434';
-  const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
-
   try {
-    // Get currently installed model info
-    const url = new URL(`${OLLAMA_URL}/api/tags`);
-    const lib = url.protocol === 'https:' ? https : http;
-
-    const localModels = await new Promise((resolve, reject) => {
-      const r = lib.get(`${OLLAMA_URL}/api/tags`, resp => {
-        let d = ''; resp.on('data', c => d += c);
-        resp.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
-      });
-      r.on('error', reject);
-      r.setTimeout(5000, () => { r.destroy(); reject(new Error('timeout')); });
+    const ores = await new Promise((resolve, reject) => {
+      const url = new URL(`${OLLAMA_URL}/api/tags`);
+      const lib = url.protocol === 'https:' ? https : http;
+      lib.get(url, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => resolve(JSON.parse(d))); }).on('error', reject);
     });
-
-    const installed = (localModels.models || []).map(m => ({
-      name: m.name,
-      size: m.size,
-      modified_at: m.modified_at,
-      digest: m.digest?.slice(0, 12)
-    }));
-
-    res.json({
-      installed,
-      current_model: OLLAMA_MODEL,
-      ollama_online: true,
-      message: 'Pull a model to get the latest version. Ollama always pulls the newest digest when you pull a model tag.',
-    });
-  } catch(e) {
-    res.json({ installed: [], ollama_online: false, error: e.message });
-  }
+    res.json({ installed: ores.models, current_model: OLLAMA_MODEL, ollama_online: true });
+  } catch(e) { res.json({ installed: [], ollama_online: false, error: e.message }); }
 });
 
-// ── START/STOP OLLAMA MODEL (load into memory) ──
 router.post('/model-action', async (req, res) => {
   const { action, model } = req.body;
-  const https = require('https');
-  const http = require('http');
-  const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama:11434';
-  const modelName = model || process.env.OLLAMA_MODEL || 'llama3.2';
-
-  if (action === 'start') {
-    // Load model into memory by sending a keep-alive request
-    try {
-      const body = JSON.stringify({ model: modelName, keep_alive: '10m', prompt: 'Hello', stream: false });
-      const url = new URL(`${OLLAMA_URL}/api/generate`);
-      const lib = url.protocol === 'https:' ? https : http;
-
-      res.json({ ok: true, message: `Loading ${modelName} into memory…` });
-
-      // Fire and forget
-      const r = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, resp => {
-        resp.resume(); // drain
-      });
-      r.on('error', () => {});
-      r.setTimeout(120000, () => r.destroy());
-      r.write(body);
-      r.end();
-    } catch(e) {
-      res.status(500).json({ error: e.message });
-    }
-  } else if (action === 'unload') {
-    try {
-      const body = JSON.stringify({ model: modelName, keep_alive: 0 });
-      const url = new URL(`${OLLAMA_URL}/api/generate`);
-      const lib = url.protocol === 'https:' ? https : http;
-      const r = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, resp => { resp.resume(); });
-      r.on('error', () => {});
-      r.write(body);
-      r.end();
-      res.json({ ok: true, message: `${modelName} unloaded from memory` });
-    } catch(e) {
-      res.status(500).json({ error: e.message });
-    }
-  } else {
-    res.status(400).json({ error: 'action must be start or unload' });
-  }
+  const body = JSON.stringify({ model: model || OLLAMA_MODEL, keep_alive: action === 'start' ? '10m' : 0 });
+  const url = new URL(`${OLLAMA_URL}/api/generate`);
+  const lib = url.protocol === 'https:' ? https : http;
+  const req2 = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, r => r.resume());
+  req2.write(body); req2.end();
+  res.json({ ok: true });
 });
 
-// ── DELETE a model from Ollama ──
 router.delete('/models/:modelName', async (req, res) => {
   const model = decodeURIComponent(req.params.modelName);
-  const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama:11434';
-  const http = require('http'); const https = require('https');
-  try {
-    const body = JSON.stringify({ name: model });
-    const url = new URL(`${OLLAMA_URL}/api/delete`);
-    const lib = url.protocol === 'https:' ? https : http;
-    await new Promise((resolve, reject) => {
-      const r = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'DELETE', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, resp => { resp.resume(); resolve(); });
-      r.on('error', reject); r.write(body); r.end();
-    });
-    res.json({ ok: true, deleted: model });
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  const body = JSON.stringify({ name: model });
+  const url = new URL(`${OLLAMA_URL}/api/delete`);
+  const lib = url.protocol === 'https:' ? https : http;
+  const req2 = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'DELETE', headers: { 'Content-Type': 'application/json' } }, r => r.resume());
+  req2.write(body); req2.end();
+  res.json({ ok: true });
 });
 
-// ── SET active model (updates env + persists to settings) ──
 router.post('/set-model', (req, res) => {
-  const { model } = req.body;
-  if (!model) return res.status(400).json({ error: 'model required' });
-  // Store in settings table for persistence across restarts
-  try {
-    const db = require('./db');
-    db.prepare("UPDATE settings SET value=? WHERE key='ollama_model'").run(model);
-  } catch(e) {}
-  // Update in-process env
-  process.env.OLLAMA_MODEL = model;
-  res.json({ ok: true, model });
+  db.prepare("UPDATE settings SET value=? WHERE key='ollama_model'").run(req.body.model);
+  process.env.OLLAMA_MODEL = req.body.model;
+  res.json({ ok: true });
 });
+
+// ── AUTO-DOWNLOAD & UPDATE MODELS ──
+async function pullModel(model) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({ name: model });
+    const url = new URL(`${OLLAMA_URL}/api/pull`);
+    const lib = url.protocol === 'https:' ? https : http;
+    const req = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, resp => {
+      resp.on('data', () => {}); resp.on('end', resolve);
+    });
+    req.on('error', reject); req.write(body); req.end();
+  });
+}
+
+async function initModels() {
+  try {
+    const resp = await new Promise((resolve, reject) => {
+      const url = new URL(`${OLLAMA_URL}/api/tags`);
+      const lib = url.protocol === 'https:' ? https : http;
+      lib.get(url, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } }); }).on('error', reject);
+    });
+    const installed = (resp.models || []).map(m => m.name);
+    for (const m of ['llama3.2', 'llama3.2-vision']) {
+      if (!installed.includes(m) && !installed.includes(m + ':latest')) {
+        console.log(`[AI] Downloading required model: ${m}...`);
+        await pullModel(m);
+        console.log(`[AI] Downloaded ${m}`);
+      }
+    }
+  } catch (e) { console.error('[AI] Model init failed:', e.message); }
+}
+
+async function updateModels() {
+  try {
+    console.log('[AI] Backup triggered: Updating LLMs...');
+    await pullModel('llama3.2');
+    await pullModel('llama3.2-vision');
+    console.log('[AI] LLM updates completed.');
+  } catch (e) { console.error('[AI] LLM update failed:', e.message); }
+}
+
+async function runAutoResearch() {
+  try {
+    const settings = db.prepare('SELECT ai_auto_research FROM settings WHERE id=1').get();
+    if (!settings?.ai_auto_research) return;
+
+    console.log('[AI Research] Checking for documented repairs needing guides...');
+    // Strictly find repairs documented in the repairs table that lack a guide
+    const target = db.prepare(`
+      SELECT r.device_brand, r.device_model, r.description, r.device_type
+      FROM repairs r 
+      LEFT JOIN repair_guides g ON (LOWER(r.device_brand) = LOWER(g.device_brand) AND LOWER(r.device_model) = LOWER(g.device_model))
+      WHERE r.deleted_at IS NULL
+      AND r.status NOT IN ('completed','cancelled') 
+      AND r.device_brand != '' AND r.device_model != ''
+      AND g.id IS NULL
+      LIMIT 1
+    `).get();
+
+    if (target) {
+      console.log(`[AI Research] Documented repair found: ${target.device_brand} ${target.device_model}. Starting research...`);
+      await generateRepairGuide(target.device_brand, target.device_model, target.description, target.device_type);
+    }
+  } catch(e) { console.error('[AI Research] Error:', e.message); }
+}
+
+setTimeout(initModels, 10000);
+
+module.exports = router;
+module.exports.updateModels = updateModels;
+module.exports.runAutoResearch = runAutoResearch;

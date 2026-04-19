@@ -8,7 +8,7 @@ const STAGES = [
   { value: 'damage', label: '⚠️ Pre-existing damage', color: 'var(--warning)' },
 ];
 
-export default function PhotoDocs({ repairId }) {
+export default function PhotoDocs({ repairId, customerId }) {
   const [photos, setPhotos] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [stage, setStage] = useState('intake');
@@ -49,6 +49,39 @@ export default function PhotoDocs({ repairId }) {
     await axios.put(`/api/photos/${photo.id}`, { caption: editCaption[photo.id] ?? photo.caption, stage: photo.stage });
     setEditCaption(e => { const n = { ...e }; delete n[photo.id]; return n; });
     load();
+  };
+
+  const emailPhoto = async (photo) => {
+    let email = '';
+    try {
+      if (customerId) {
+        const r = await axios.get(`/api/customers/${customerId}`);
+        email = r.data.email || '';
+      }
+    } catch(e) {}
+    
+    const target = window.prompt('Enter email address to send this photo link to:', email);
+    if (!target) return;
+
+    try {
+      await axios.post('/api/email/send-general', {
+        customer_id: customerId,
+        repair_id: repairId,
+        email: target,
+        subject: `Photo documentation: ${photo.caption || 'Repair documentation'}`,
+        body: `
+          <h3>Photo documentation</h3>
+          <p>You have been sent a photo related to your repair.</p>
+          <p><strong>Stage:</strong> ${STAGES.find(s => s.value === photo.stage)?.label || photo.stage}</p>
+          ${photo.caption ? `<p><strong>Caption:</strong> ${photo.caption}</p>` : ''}
+          <div style="margin-top: 16px;">
+            <img src="${window.location.origin}${photo.url}" style="max-width: 100%; border-radius: 8px;" />
+          </div>
+          <p><a href="${window.location.origin}${photo.url}">Click here to view full size ↗</a></p>
+        `
+      });
+      alert('Photo link emailed successfully!');
+    } catch(e) { alert('Error: ' + (e.response?.data?.error || e.message)); }
   };
 
   const grouped = STAGES.reduce((acc, s) => {
@@ -145,9 +178,12 @@ export default function PhotoDocs({ repairId }) {
               <button className="btn btn-sm" onClick={() => setLightbox(null)}>✕ Close</button>
             </div>
             <img src={lightbox.url} alt={lightbox.caption} style={{ width: '100%', maxHeight: '75vh', objectFit: 'contain', borderRadius: 8 }} />
-            <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>
-              {new Date(lightbox.created_at).toLocaleString()}
-              <a href={lightbox.url} target="_blank" rel="noreferrer" style={{ marginLeft: 12, color: 'var(--accent)' }}>Download original ↗</a>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+              <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+                {new Date(lightbox.created_at).toLocaleString()}
+                <a href={lightbox.url} target="_blank" rel="noreferrer" style={{ marginLeft: 12, color: 'var(--accent)' }}>Download original ↗</a>
+              </div>
+              <button className="btn btn-sm" style={{ background: 'var(--accent-light)', color: 'var(--accent)', borderColor: 'var(--accent)' }} onClick={() => emailPhoto(lightbox)}>📧 Email link</button>
             </div>
           </div>
         </div>

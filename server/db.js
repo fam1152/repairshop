@@ -1,8 +1,19 @@
 const Database = require('better-sqlite3');
-const path = require('path');
 const fs = require('fs');
+const path = require('path');
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/repairshop.sqlite');
+// Determine database path
+let defaultDbPath = path.join(__dirname, '../data/repairshop.sqlite');
+
+// If running as RPM, use the persistent /var/lib location
+if (fs.existsSync('/var/lib/repairshop')) {
+  defaultDbPath = '/var/lib/repairshop/repairshop.sqlite';
+  if (!process.env.UPLOADS_PATH) {
+    process.env.UPLOADS_PATH = '/var/lib/repairshop/uploads';
+  }
+}
+
+const dbPath = process.env.DB_PATH || defaultDbPath;
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
@@ -122,6 +133,8 @@ db.exec(`
     unit_cost REAL DEFAULT 0,
     sell_price REAL DEFAULT 0,
     supplier TEXT DEFAULT '',
+    manufacturer TEXT DEFAULT '',
+    device_type TEXT DEFAULT '',
     location TEXT DEFAULT '',
     notes TEXT DEFAULT '',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -365,6 +378,22 @@ if (existingLog.c === 0) {
 }
 
 
+// ── v10.1.x changelog entries ───────────────────────────────────
+try {
+  const checkV10 = db.prepare("SELECT id FROM changelog WHERE version=?").get('v10.1.2');
+  if (!checkV10) {
+    const { v4: uuidv4 } = require('uuid');
+    const newLogs = [
+      { version: 'v10.1.2', date: '2026-04-19', type: 'fix', changes: 'Fixed RPM install scriptlet errors and version synchronization' },
+      { version: 'v10.1.1', date: '2026-04-19', type: 'fix', changes: 'Fixed SyntaxError (duplicate db declaration) in main server file' },
+      { version: 'v10.1.0', date: '2026-04-19', type: 'feature', changes: 'Multi-mode update system (Git/RPM/GitHub support) and database fixes for manufacturer/device_type' },
+      { version: 'v10.0',   date: '2026-04-13', type: 'feature', changes: 'Invoice balance tracking, payments log, authorized pickup, OS/Version fields, customer document uploads, and Trash/Recycle bin' }
+    ];
+    const stmt = db.prepare('INSERT INTO changelog (id,version,date,type,changes) VALUES (?,?,?,?,?)');
+    newLogs.forEach(l => stmt.run(uuidv4(), l.version, l.date, l.type, l.changes));
+  }
+} catch(e) { console.error("Error seeding new changelog:", e.message); }
+
 // Soft delete migrations
 try { db.exec(`ALTER TABLE customers ADD COLUMN deleted_at DATETIME DEFAULT NULL`); } catch(e) {}
 try { db.exec(`ALTER TABLE invoices ADD COLUMN deleted_at DATETIME DEFAULT NULL`); } catch(e) {}
@@ -529,6 +558,15 @@ db.exec(`CREATE TABLE IF NOT EXISTS workflow_runs (
 // Google Drive backup settings
 try { db.exec(`ALTER TABLE settings ADD COLUMN google_drive_backup INTEGER DEFAULT 0`); } catch(e) {}
 try { db.exec(`ALTER TABLE settings ADD COLUMN google_drive_folder_id TEXT DEFAULT ''`); } catch(e) {}
+
+// Automatic Google sync toggles
+try { db.exec(`ALTER TABLE settings ADD COLUMN auto_sync_google_calendar INTEGER DEFAULT 0`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN auto_sync_google_contacts INTEGER DEFAULT 0`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN auto_sync_google_drive INTEGER DEFAULT 0`); } catch(e) {}
+
+// Inventory: manufacturer and device_type fields
+try { db.exec(`ALTER TABLE inventory ADD COLUMN manufacturer TEXT DEFAULT ''`); } catch(e) {}
+try { db.exec(`ALTER TABLE inventory ADD COLUMN device_type TEXT DEFAULT ''`); } catch(e) {}
 
 // Invoice labor line flag
 try { db.exec(`ALTER TABLE invoices ADD COLUMN labor_total REAL DEFAULT 0`); } catch(e) {}
@@ -735,5 +773,45 @@ try { db.exec(`ALTER TABLE google_tokens ADD COLUMN drive_folder_id TEXT DEFAULT
     }
   });
 }
+
+// ── NEW FEATURES MIGRATIONS ──────────────────────────────────────
+try { db.exec(`ALTER TABLE settings ADD COLUMN ui_scale TEXT DEFAULT '1.0'`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN donation_link TEXT DEFAULT ''`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN support_email TEXT DEFAULT ''`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN email_provider TEXT DEFAULT 'resend'`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN email_api_key TEXT DEFAULT ''`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN ai_mode TEXT DEFAULT 'offline'`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN ai_cloud_provider TEXT DEFAULT 'openai'`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN ai_cloud_key TEXT DEFAULT ''`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN ai_search_provider TEXT DEFAULT 'serper'`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN ai_search_key TEXT DEFAULT ''`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN ai_auto_research INTEGER DEFAULT 0`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN device_types TEXT DEFAULT '["Phone","Laptop","Desktop","Tablet","Printer","Server","Network Device","Monitor","Other"]'`); } catch(e) {}
+try { db.exec(`ALTER TABLE repairs ADD COLUMN is_active_kiosk INTEGER DEFAULT 0`); } catch(e) {}
+try { db.exec(`ALTER TABLE repair_guides ADD COLUMN deleted_at DATETIME`); } catch(e) {}
+
+db.exec(`CREATE TABLE IF NOT EXISTS repair_guides (
+  id TEXT PRIMARY KEY,
+  device_brand TEXT,
+  device_model TEXT,
+  issue TEXT,
+  guide_content TEXT NOT NULL,
+  source_url TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
+
+db.exec(`CREATE TABLE IF NOT EXISTS communications (
+  id TEXT PRIMARY KEY,
+  customer_id TEXT NOT NULL REFERENCES customers(id),
+  repair_id TEXT REFERENCES repairs(id),
+  type TEXT DEFAULT 'email',
+  direction TEXT DEFAULT 'outbound',
+  subject TEXT DEFAULT '',
+  body TEXT NOT NULL,
+  sender TEXT DEFAULT '',
+  recipient TEXT DEFAULT '',
+  status TEXT DEFAULT 'sent',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
 
 module.exports = db;

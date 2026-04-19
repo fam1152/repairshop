@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { SettingsProvider } from './context/SettingsContext';
+import { AIProvider } from './context/AIContext';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Customers from './pages/Customers';
@@ -157,7 +158,9 @@ export default function App() {
   return (
     <AuthProvider>
       <SettingsProvider>
-        <Shell />
+        <AIProvider>
+          <Shell />
+        </AIProvider>
       </SettingsProvider>
     </AuthProvider>
   );
