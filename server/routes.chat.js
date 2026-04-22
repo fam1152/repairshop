@@ -32,7 +32,7 @@ router.post('/messages', (req, res) => {
 
 // AI chat — sends message to Ollama and stores response
 router.post('/ai', async (req, res) => {
-  const { message } = req.body;
+  const { message, model: modelOverride } = req.body;
   if (!message?.trim()) return res.status(400).json({ error: 'Message required' });
 
   // Store user message
@@ -103,17 +103,18 @@ router.post('/ai', async (req, res) => {
   } catch (e) { console.error('AI search context error:', e); }
 
   // Build context from recent repairs/stats for the AI
-  const sett = db.prepare('SELECT device_types FROM settings WHERE id=1').get();
+  const settings = db.prepare('SELECT device_types, ollama_model FROM settings WHERE id=1').get();
   const manufacturers = db.prepare('SELECT name, device_types FROM manufacturers WHERE active=1').all();
-  const shopInfo = `Supported Manufacturers: ${manufacturers.map(m => `${m.name} (${JSON.parse(m.device_types || '[]').join(', ')})`).join('; ')}\nAvailable Device Types: ${sett?.device_types || '[]'}`;
+  const shopInfo = `Supported Manufacturers: ${manufacturers.map(m => `${m.name} (${JSON.parse(m.device_types || '[]').join(', ')})`).join('; ')}\nAvailable Device Types: ${settings?.device_types || '[]'}`;
 
   const openRepairs = db.prepare("SELECT COUNT(*) as c FROM repairs WHERE status NOT IN ('completed','cancelled')").get().c;
   const todayRepairs = db.prepare("SELECT COUNT(*) as c FROM repairs WHERE date(created_at)=date('now')").get().c;
   const lowStock = db.prepare('SELECT COUNT(*) as c FROM inventory WHERE quantity <= quantity_min').get().c;
   const pendingReminders = db.prepare("SELECT COUNT(*) as c FROM reminders WHERE status='pending'").get().c;
 
-  const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama:11434';
-  const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
+  const aiRoutes = require('./routes.ai');
+  const currentUrl = aiRoutes.getOllamaUrl ? aiRoutes.getOllamaUrl() : (process.env.OLLAMA_URL || 'http://ollama:11434');
+  const OLLAMA_MODEL = settings?.ollama_model || process.env.OLLAMA_MODEL || 'llama3.2';
 
   const systemPrompt = `You are RepairBot, the AI assistant for an IT repair shop management system. You are helpful, friendly, and knowledgeable about IT repairs, customer service, and shop management.
 
@@ -140,13 +141,13 @@ When providing information from the database, be specific (e.g., mention names, 
       options: { temperature: 0.5, num_predict: 400 }
     });
 
-    const url = new URL(`${OLLAMA_URL}/api/generate`);
+    const url = new URL(`${currentUrl}/api/generate`);
     const lib = url.protocol === 'https:' ? https : http;
 
     const aiResponse = await new Promise((resolve, reject) => {
       const req2 = lib.request({
         hostname: url.hostname,
-        port: url.port || 80,
+        port: url.port || (url.protocol === 'https:' ? 443 : 80),
         path: url.pathname,
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
@@ -179,8 +180,10 @@ When providing information from the database, be specific (e.g., mention names, 
 
 // AI greeting on login
 router.post('/greeting', async (req, res) => {
-  const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama:11434';
-  const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
+  const aiRoutes = require('./routes.ai');
+  const currentUrl = aiRoutes.getOllamaUrl ? aiRoutes.getOllamaUrl() : (process.env.OLLAMA_URL || 'http://ollama:11434');
+  const settings = db.prepare('SELECT ollama_model FROM settings WHERE id=1').get();
+  const OLLAMA_MODEL = settings?.ollama_model || process.env.OLLAMA_MODEL || 'llama3.2';
 
   const now = new Date();
   const hour = now.getHours();
@@ -201,11 +204,11 @@ Keep it to 2-3 sentences max. Be warm and helpful. Mention the most important th
 
   try {
     const body = JSON.stringify({ model: OLLAMA_MODEL, prompt, stream: false, options: { temperature: 0.7, num_predict: 120 } });
-    const url = new URL(`${OLLAMA_URL}/api/generate`);
+    const url = new URL(`${currentUrl}/api/generate`);
     const lib = url.protocol === 'https:' ? https : http;
 
     const greeting = await new Promise((resolve, reject) => {
-      const r = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, resp => {
+      const r = lib.request({ hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80), path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, resp => {
         let data = '';
         resp.on('data', c => data += c);
         resp.on('end', () => { try { resolve(JSON.parse(data).response || `Good ${timeOfDay}, ${req.user.username}!`); } catch(e) { reject(e); } });

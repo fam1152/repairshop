@@ -3,15 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Determine database path
-let defaultDbPath = path.join(__dirname, '../data/repairshop.sqlite');
-
-// If running as RPM, use the persistent /var/lib location
-if (fs.existsSync('/var/lib/repairshop')) {
-  defaultDbPath = '/var/lib/repairshop/repairshop.sqlite';
-  if (!process.env.UPLOADS_PATH) {
-    process.env.UPLOADS_PATH = '/var/lib/repairshop/uploads';
-  }
-}
+const defaultDbPath = path.join(__dirname, '../data/repairshop.sqlite');
 
 const dbPath = process.env.DB_PATH || defaultDbPath;
 const dbDir = path.dirname(dbPath);
@@ -378,19 +370,24 @@ if (existingLog.c === 0) {
 }
 
 
-// ── v10.1.x changelog entries ───────────────────────────────────
+// ── v10.1.x & v11.0.0 changelog entries ────────────────────────
 try {
-  const checkV10 = db.prepare("SELECT id FROM changelog WHERE version=?").get('v10.1.2');
-  if (!checkV10) {
+  const checkV1 = db.prepare("SELECT id FROM changelog WHERE version=?").get('v1.0.0-Beta');
+  if (!checkV1) {
     const { v4: uuidv4 } = require('uuid');
     const newLogs = [
-      { version: 'v10.1.2', date: '2026-04-19', type: 'fix', changes: 'Fixed RPM install scriptlet errors and version synchronization' },
-      { version: 'v10.1.1', date: '2026-04-19', type: 'fix', changes: 'Fixed SyntaxError (duplicate db declaration) in main server file' },
-      { version: 'v10.1.0', date: '2026-04-19', type: 'feature', changes: 'Multi-mode update system (Git/RPM/GitHub support) and database fixes for manufacturer/device_type' },
+      { version: 'v1.0.0-Beta-Build-04-20-2026', date: '2026-04-20', type: 'release', changes: 'Consolidated interface, added Dedicated Print Queue, File Browser, and color-coded status tray icon. Cleaned up settings into logical groups.' },
+      { version: 'v10.1.2', date: '2026-04-19', type: 'fix', changes: 'Fixed SyntaxError (duplicate db declaration) and version synchronization' },
+      { version: 'v10.1.1', date: '2026-04-19', type: 'fix', changes: 'Fixed critical server crash due to duplicate db variable declaration' },
+      { version: 'v10.1.0', date: '2026-04-19', type: 'feature', changes: 'Multi-mode update system (Git/GitHub support) and database fixes for manufacturer/device_type' },
       { version: 'v10.0',   date: '2026-04-13', type: 'feature', changes: 'Invoice balance tracking, payments log, authorized pickup, OS/Version fields, customer document uploads, and Trash/Recycle bin' }
     ];
     const stmt = db.prepare('INSERT INTO changelog (id,version,date,type,changes) VALUES (?,?,?,?,?)');
-    newLogs.forEach(l => stmt.run(uuidv4(), l.version, l.date, l.type, l.changes));
+    newLogs.forEach(l => {
+      // Avoid duplicates if some already exist
+      const exists = db.prepare("SELECT id FROM changelog WHERE version=?").get(l.version);
+      if (!exists) stmt.run(uuidv4(), l.version, l.date, l.type, l.changes);
+    });
   }
 } catch(e) { console.error("Error seeding new changelog:", e.message); }
 
@@ -786,6 +783,8 @@ try { db.exec(`ALTER TABLE settings ADD COLUMN ai_cloud_key TEXT DEFAULT ''`); }
 try { db.exec(`ALTER TABLE settings ADD COLUMN ai_search_provider TEXT DEFAULT 'serper'`); } catch(e) {}
 try { db.exec(`ALTER TABLE settings ADD COLUMN ai_search_key TEXT DEFAULT ''`); } catch(e) {}
 try { db.exec(`ALTER TABLE settings ADD COLUMN ai_auto_research INTEGER DEFAULT 0`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN ollama_model TEXT DEFAULT 'llama3.2'`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN ollama_url TEXT DEFAULT ''`); } catch(e) {}
 try { db.exec(`ALTER TABLE settings ADD COLUMN device_types TEXT DEFAULT '["Phone","Laptop","Desktop","Tablet","Printer","Server","Network Device","Monitor","Other"]'`); } catch(e) {}
 try { db.exec(`ALTER TABLE repairs ADD COLUMN is_active_kiosk INTEGER DEFAULT 0`); } catch(e) {}
 try { db.exec(`ALTER TABLE repair_guides ADD COLUMN deleted_at DATETIME`); } catch(e) {}

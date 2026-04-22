@@ -312,7 +312,8 @@ function TrainingManager() {
                 aspectRatio: '1', borderRadius: 6, background: 'var(--bg2)', border: '1px solid var(--border)', 
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, cursor: 'help', overflow: 'hidden'
               }}>
-                {a.device_model.toLowerCase().match(/\.(jpg|jpeg|png)$/) ? '🖼️' : '📄'}
+                {a.mime_type?.startsWith('image/') || a.device_brand === 'Image Asset' ? '🖼️' : 
+                 a.mime_type === 'application/pdf' || a.device_brand === 'PDF Manual' ? '📄' : '📝'}
               </div>
             ))}
             {assets.length === 0 && <div style={{ gridColumn: 'span 10', fontSize: 11, color: 'var(--text3)', textAlign: 'center', padding: '10px 0' }}>No assets downloaded or uploaded yet.</div>}
@@ -435,15 +436,44 @@ function HardwareStats() {
 }
 
 export function AISettings() {
-  const [status, setStatus] = useState(null); const [pulling, setPulling] = useState(false); const [pullProgress, setPullProgress] = useState(''); const [pullModel, setPullModel] = useState('llama3.2');
+  const [status, setStatus] = useState(null); 
+  const [modelInfo, setModelInfo] = useState({ installed: [], running: [], current_model: '' });
+  const [pulling, setPulling] = useState(false); 
+  const [pullProgress, setPullProgress] = useState(''); 
+  const [pullModel, setPullModel] = useState('llama3.2');
   const [aiTab, setAiTab] = useState('status');
-  const [config, setConfig] = useState({ ai_mode: 'offline', ai_cloud_provider: 'openai', ai_cloud_key: '', ai_search_provider: 'serper', ai_search_key: '', ai_auto_research: 0 });
-  const loadStatus = () => axios.get('/api/ai/status').then(r => setStatus(r.data)).catch(() => setStatus({ online: false }));
+  const [config, setConfig] = useState({ ai_mode: 'offline', ai_cloud_provider: 'openai', ai_cloud_key: '', ai_search_provider: 'serper', ai_search_key: '', ai_auto_research: 0, ollama_url: '' });
+  const [actionLoading, setActionLoading] = useState(null);
+
+  const loadStatus = () => {
+    axios.get('/api/ai/status').then(r => setStatus(r.data)).catch(() => setStatus({ online: false }));
+    axios.get('/api/ai/model-updates').then(r => setModelInfo(r.data)).catch(() => {});
+  };
+
   useEffect(() => {
-    loadStatus(); axios.get('/api/settings').then(r => r.data && setConfig({ ai_mode: r.data.ai_mode || 'offline', ai_cloud_provider: r.data.ai_cloud_provider || 'openai', ai_cloud_key: r.data.ai_cloud_key || '', ai_search_provider: r.data.ai_search_provider || 'serper', ai_search_key: r.data.ai_search_key || '', ai_auto_research: r.data.ai_auto_research || 0 }));
-    const t = setInterval(loadStatus, 5000); return () => clearInterval(t);
+    loadStatus(); axios.get('/api/settings').then(r => r.data && setConfig({ ai_mode: r.data.ai_mode || 'offline', ai_cloud_provider: r.data.ai_cloud_provider || 'openai', ai_cloud_key: r.data.ai_cloud_key || '', ai_search_provider: r.data.ai_search_provider || 'serper', ai_search_key: r.data.ai_search_key || '', ai_auto_research: r.data.ai_auto_research || 0, ollama_url: r.data.ollama_url || '' }));
+    const t = setInterval(loadStatus, 10000); return () => clearInterval(t);
   }, []);
+
   const saveConfig = async () => { try { await axios.put('/api/settings', config); alert('Saved ✓'); } catch(e) { alert('Failed'); } };
+  
+  const modelAction = async (model, action) => {
+    setActionLoading(model + action);
+    try {
+      await axios.post('/api/ai/model-action', { model, action });
+      loadStatus();
+    } catch(e) { alert('Action failed'); }
+    setActionLoading(null);
+  };
+
+  const setDefaultModel = async (model) => {
+    try {
+      await axios.post('/api/ai/set-model', { model });
+      loadStatus();
+      alert(`Default model set to: ${model}`);
+    } catch(e) { alert('Failed to set default'); }
+  };
+
   const pullModelFn = async () => {
     setPulling(true); setPullProgress('Starting…'); try {
       const response = await fetch('/api/ai/pull-model', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${localStorage.getItem('token')}` }, body: JSON.stringify({ model: pullModel }) });
@@ -462,47 +492,106 @@ export function AISettings() {
       {aiTab==='training' && <TrainingManager />}
       {aiTab==='guides' && <RepairGuidesTab />}
       {aiTab==='status' && (
-        <div>
-          <div className="card mb-3">
-            <div style={{ fontWeight: 700, marginBottom: 12 }}>🌐 AI Mode</div>
-            <select className="form-control mb-2" value={config.ai_mode} onChange={e => setConfig({...config, ai_mode: e.target.value})}>
-              <option value="offline">Offline (Private)</option><option value="cloud">Cloud (High Intel)</option><option value="hybrid">Hybrid (Local + Search)</option>
-            </select>
-            <button className="btn btn-primary w-full mt-2" onClick={saveConfig}>Save Connectivity</button>
-          </div>
-          <div className="card mb-3">
-            <div className="flex-between mb-3"><div style={{ fontWeight: 700 }}>🤖 Ollama Status</div><button className="btn btn-sm" onClick={loadStatus}>↻</button></div>
-            <div style={{ background: 'var(--bg3)', padding: 16, borderRadius: 10, textAlign: 'center' }}>
-              <div style={{ fontSize: 24 }}>{status?.online ? '🟢' : '🔴'}</div>
-              <div style={{ fontWeight: 700 }}>{status?.online ? 'Ollama Online' : 'Ollama Offline'}</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 400px', gap: 20 }}>
+          <div>
+            <div className="card mb-3">
+              <div className="flex-between mb-3"><div style={{ fontWeight: 700 }}>🤖 Ollama Management & RAM</div><button className="btn btn-sm" onClick={loadStatus}>↻ Refresh</button></div>
+              
+              <div style={{ maxHeight: '600px', overflowY: 'auto' }}>
+                {modelInfo.installed?.map(m => {
+                  const isRunning = modelInfo.running?.some(r => r.name === m.name);
+                  const isDefault = modelInfo.current_model === m.name;
+                  return (
+                    <div key={m.name} style={{ padding: 14, background: 'var(--bg3)', borderRadius: 10, marginBottom: 10, border: isDefault ? '2px solid var(--accent)' : '1px solid var(--border)' }}>
+                      <div className="flex-between">
+                        <div>
+                          <div style={{ fontWeight: 700 }}>{m.name} {isDefault && <span className="badge" style={{ background: 'var(--accent)', color: '#fff', fontSize: 10 }}>DEFAULT</span>}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text3)' }}>Size: {formatSize(m.size)} • Type: {m.details?.family || 'N/A'}</div>
+                          {isRunning && <div className="badge badge-success" style={{ fontSize: 9, marginTop: 4 }}>⚡ LOADED IN RAM</div>}
+                        </div>
+                        <div className="flex" style={{ gap: 6 }}>
+                          {!isDefault && <button className="btn btn-xs" onClick={() => setDefaultModel(m.name)}>Set Default</button>}
+                          {isRunning ? (
+                            <button className="btn btn-xs btn-danger" onClick={() => modelAction(m.name, 'unload')} disabled={actionLoading === m.name + 'unload'}>
+                              {actionLoading === m.name + 'unload' ? '…' : 'Unload'}
+                            </button>
+                          ) : (
+                            <button className="btn btn-xs btn-primary" onClick={() => modelAction(m.name, 'load')} disabled={actionLoading === m.name + 'load'}>
+                              {actionLoading === m.name + 'load' ? '…' : 'Load to RAM'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                {(!modelInfo.installed || modelInfo.installed.length === 0) && (
+                  <div style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>No models installed yet. Use the download tool on the right.</div>
+                )}
+              </div>
+              <HardwareStats />
             </div>
-            <HardwareStats />
-          </div>
-          <div className="card">
-            <div style={{ fontWeight: 700, marginBottom: 10 }}>⬇️ Download Models</div>
-            <select className="form-control mb-3" value={pullModel} onChange={e => setPullModel(e.target.value)}>{['llama3.2','llama3.2-vision','mistral','phi3'].map(m => <option key={m} value={m}>{m}</option>)}</select>
-            <button className="btn btn-primary w-full" onClick={pullModelFn} disabled={pulling}>{pulling ? pullProgress : `Download ${pullModel}`}</button>
           </div>
 
-          <div className="card mt-3">
-            <div style={{ fontWeight: 700, marginBottom: 10 }}>📤 Upload Custom LLM (.GGUF)</div>
-            <div className="form-group">
-              <label>Model Name</label>
-              <input className="form-control mb-2" id="custom-model-name" placeholder="e.g. my-custom-model" />
+          <div>
+            <div className="card mb-3">
+              <div style={{ fontWeight: 700, marginBottom: 12 }}>🌐 AI Mode & Connection</div>
+              <div className="form-group">
+                <label className="text-sm">Connectivity Mode</label>
+                <select className="form-control mb-2" value={config.ai_mode} onChange={e => setConfig({...config, ai_mode: e.target.value})}>
+                  <option value="offline">Offline (Private)</option><option value="cloud">Cloud (High Intel)</option><option value="hybrid">Hybrid (Local + Search)</option>
+                </select>
+              </div>
+
+              <div className="form-group mt-3">
+                <label className="text-sm">Ollama API URL (Optional Override)</label>
+                <input 
+                  className="form-control" 
+                  value={config.ollama_url} 
+                  onChange={e => setConfig({...config, ollama_url: e.target.value})} 
+                  placeholder="e.g. http://192.168.1.50:11434"
+                />
+                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                  Default is auto-discovered or environment OLLAMA_URL.
+                  {status?.online && status?.ollama_url && ` Currently using: ${status.ollama_url}`}
+                </div>
+              </div>
+
+              <button className="btn btn-primary w-full mt-3" onClick={saveConfig}>Save Connectivity</button>
             </div>
-            <input type="file" accept=".gguf" id="custom-model-file" className="mb-3" />
-            <button className="btn btn-primary w-full" onClick={async () => {
-              const name = document.getElementById('custom-model-name').value;
-              const file = document.getElementById('custom-model-file').files[0];
-              if (!name || !file) return alert('Name and file required');
-              const fd = new FormData(); fd.append('file', file);
-              try {
-                const res = await axios.post('/api/ai/models/upload', fd);
-                await axios.post('/api/ai/models/create', { name, filePath: res.data.path });
-                alert('Custom model created successfully! You can now select it in settings.');
-                loadStatus();
-              } catch(e) { alert('Upload/Create failed'); }
-            }}>Upload & Create Model</button>
+            
+            <div className="card mb-3">
+              <div style={{ fontWeight: 700, marginBottom: 10 }}>⬇️ Download Models</div>
+              <div className="flex gap-2 mb-2">
+                <input className="form-control" value={pullModel} onChange={e => setPullModel(e.target.value)} placeholder="Model name…" />
+                <select className="form-control" style={{ width: 'auto' }} onChange={e => setPullModel(e.target.value)}>
+                  <option value="">Popular…</option>
+                  {['llama3.2','llama3.2-vision','mistral','phi3'].map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <button className="btn btn-primary w-full" onClick={pullModelFn} disabled={pulling}>{pulling ? pullProgress : `Download Model`}</button>
+            </div>
+
+            <div className="card mt-3">
+              <div style={{ fontWeight: 700, marginBottom: 10 }}>📤 Upload Custom LLM (.GGUF)</div>
+              <div className="form-group">
+                <label>Model Name</label>
+                <input className="form-control mb-2" id="custom-model-name" placeholder="e.g. my-custom-model" />
+              </div>
+              <input type="file" accept=".gguf" id="custom-model-file" className="mb-3" />
+              <button className="btn btn-primary w-full" onClick={async () => {
+                const name = document.getElementById('custom-model-name').value;
+                const file = document.getElementById('custom-model-file').files[0];
+                if (!name || !file) return alert('Name and file required');
+                const fd = new FormData(); fd.append('file', file);
+                try {
+                  const res = await axios.post('/api/ai/models/upload', fd);
+                  await axios.post('/api/ai/models/create', { name, filePath: res.data.path });
+                  alert('Custom model created successfully!');
+                  loadStatus();
+                } catch(e) { alert('Upload failed'); }
+              }}>Upload & Create</button>
+            </div>
           </div>
         </div>
       )}

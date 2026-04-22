@@ -33,7 +33,7 @@ router.put('/', (req, res) => {
     'auto_sync_google_calendar', 'auto_sync_google_contacts', 'auto_sync_google_drive',
     'ui_scale', 'donation_link', 'support_email', 'email_provider', 'email_api_key',
     'ai_mode', 'ai_cloud_provider', 'ai_cloud_key', 'ai_search_provider', 'ai_search_key',
-    'ai_auto_research', 'device_types'
+    'ai_auto_research', 'ollama_url', 'device_types'
   ];
 
   let sql = 'UPDATE settings SET ';

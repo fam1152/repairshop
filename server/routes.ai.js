@@ -10,182 +10,82 @@ const pdf = require('pdf-parse');
 const Tesseract = require('tesseract.js');
 const { v4: uuidv4 } = require('uuid');
 const upload = multer({ limits: { fileSize: 20 * 1024 * 1024 } }); // 20MB limit
+const axios = require('axios');
 
-router.use(auth);
+const OLLAMA_URL_ENV = process.env.OLLAMA_URL || 'http://ollama:11434';
+let DISCOVERED_OLLAMA_URL = OLLAMA_URL_ENV;
+const OLLAMA_MODEL_DEFAULT = process.env.OLLAMA_MODEL || 'llama3.2';
 
-const OLLAMA_URL = process.env.OLLAMA_URL || 'http://ollama:11434';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2';
-
-// ── Helper: Get Shop and Training Context ──
-async function getAIContext() {
-  const settings = db.prepare('SELECT company_name, phone, device_types FROM settings WHERE id=1').get();
-  const manufacturers = db.prepare('SELECT name, device_types FROM manufacturers WHERE active=1').all();
-  let training = { system_context: '', examples: [] };
+// Helper to get effective Ollama URL (prefers DB setting)
+function getOllamaUrl() {
   try {
-    const trainPath = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'ai-training.json');
-    if (fs.existsSync(trainPath)) {
-      training = JSON.parse(fs.readFileSync(trainPath, 'utf8'));
+    const sett = db.prepare('SELECT ollama_url FROM settings WHERE id=1').get();
+    return sett?.ollama_url || DISCOVERED_OLLAMA_URL;
+  } catch(e) { return DISCOVERED_OLLAMA_URL; }
+}
+
+// ── Auto-Discovery for Ollama ──
+async function scanForOllama() {
+  const subnets = ['127.0.0.1', 'host.docker.internal', '172.17.0.1'];
+  try {
+    const { execSync } = require('child_process');
+    const ipRoute = execSync('ip route show default', { encoding: 'utf8' });
+    const gateway = ipRoute.match(/default via ([\d\.]+)/)?.[1];
+    if (gateway) {
+      const base = gateway.split('.').slice(0, 3).join('.');
+      subnets.push(gateway);
+      for (let i = 1; i < 255; i++) {
+        if (i < 10 || i === 226 || (i > 100 && i < 110)) {
+           subnets.push(`${base}.${i}`);
+        }
+      }
     }
   } catch(e) {}
 
-  let context = `Shop Name: ${settings?.company_name || 'Our IT Shop'}\n`;
-  if (settings?.phone) context += `Shop Phone: ${settings.phone}\n`;
-  if (training.system_context) context += `\nAdditional Context:\n${training.system_context}\n`;
-  
-  // ── Load Technical Knowledge Base ──
-  try {
-    const kbPath = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'knowledge-base');
-    if (!fs.existsSync(kbPath)) fs.mkdirSync(kbPath, { recursive: true });
-    const kbFiles = fs.readdirSync(kbPath).filter(f => f.endsWith('.txt') || f.endsWith('.learned'));
-    if (kbFiles.length > 0) {
-      context += `\nTechnical Knowledge Base (Manuals/Schematics):\n`;
-      kbFiles.forEach(f => {
-        const content = fs.readFileSync(path.join(kbPath, f), 'utf8');
-        context += `--- Document: ${f} ---\n${content}\n`;
-      });
-    }
-  } catch(e) { console.error('[AI] KB load error:', e); }
-
-  if (training.examples && training.examples.length > 0) {
-    context += `\nHere are some examples of how to respond:\n`;
-    training.examples.forEach(ex => {
-      context += `Q: ${ex.prompt}\nA: ${ex.response}\n`;
-    });
-  }
-
-  return { 
-    shop_name: settings?.company_name || 'Our IT Shop',
-    training_context: context,
-    system_context_only: training.system_context || '',
-    settings, // Include full settings object
-    shop_info: `Supported Manufacturers: ${manufacturers.map(m => `${m.name} (${JSON.parse(m.device_types || '[]').join(', ')})`).join('; ')}\nAvailable Device Types: ${settings?.device_types || '[]'}`
-  };
-}
-
-// ── Web Search Helper (Serper.dev) ──
-async function performWebSearch(query, apiKey) {
-  if (!apiKey) return "No Search API key provided.";
-  try {
-    const res = await axios.post('https://google.serper.dev/search', { q: query, num: 4 }, {
-      headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' }
-    });
-    const snippets = (res.data.organic || []).map(r => `Title: ${r.title}\nSource: ${r.link}\nSnippet: ${r.snippet}`).join('\n\n');
-    return snippets || "No results found.";
-  } catch (e) { return "Search failed: " + e.message; }
-}
-
-// ── Cloud AI Helper (OpenAI / Gemini) ──
-async function cloudGenerate(prompt, systemPrompt, images = [], settings) {
-  const { ai_cloud_provider, ai_cloud_key } = settings;
-  if (!ai_cloud_key) throw new Error('Cloud API key missing in settings.');
-
-  if (ai_cloud_provider === 'openai') {
-    const messages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: prompt }];
-    // Handle images if any
-    if (images.length > 0) {
-      messages[1].content = [
-        { type: 'text', text: prompt },
-        ...images.map(img => ({ type: 'image_url', image_url: { url: `data:image/jpeg;base64,${img}` } }))
-      ];
-    }
-    const res = await axios.post('https://api.openai.com/v1/chat/completions', {
-      model: 'gpt-4o-mini',
-      messages,
-      max_tokens: 1000,
-    }, { headers: { 'Authorization': `Bearer ${ai_cloud_key}` } });
-    return res.data.choices[0].message.content;
-  } 
-  else if (ai_cloud_provider === 'gemini') {
-    // Basic Gemini implementation
-    const res = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${ai_cloud_key}`, {
-      contents: [{ role: 'user', parts: [{ text: systemPrompt + "\n\n" + prompt }] }]
-    });
-    return res.data.candidates[0].content.parts[0].text;
-  }
-  throw new Error('Unsupported cloud provider');
-}
-
-// ── Core Ollama fetch helper ──
-async function ollamaGenerate(prompt, systemPrompt, images = []) {
-  // We'll wrap this in a way that respects the mode
-  const ctx = await getAIContext();
-  const mode = ctx.settings?.ai_mode || 'offline';
-
-  if (mode === 'cloud') {
-    return cloudGenerate(prompt, systemPrompt, images, ctx.settings);
-  }
-
-  let finalSystem = systemPrompt;
-  if (mode === 'hybrid') {
-    const searchResults = await performWebSearch(prompt, ctx.settings?.ai_search_key);
-    finalSystem += `\n\nWEB SEARCH RESULTS (Use these for up-to-date info):\n${searchResults}`;
-  }
-
-  return new Promise((resolve, reject) => {
-    // Use vision model if images are provided
-    const model = images.length > 0 ? 'llama3.2-vision' : OLLAMA_MODEL;
-    const body = JSON.stringify({
-      model,
-      prompt,
-      system: finalSystem,
-      stream: false,
-      images, // Array of base64 strings
-      options: {
-        temperature: 0.4,
-        num_predict: 600,
+  console.log('[AI] Scanning for Ollama in subnets...');
+  for (const host of [...new Set(subnets)]) {
+    const url = `http://${host}:11434`;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 200);
+      const response = await axios.get(`${url}/api/tags`, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (response.status === 200) {
+        console.log(`[AI] Found Ollama at ${url}`);
+        DISCOVERED_OLLAMA_URL = url;
+        return url;
       }
-    });
-
-    const url = new URL(`${OLLAMA_URL}/api/generate`);
-    const lib = url.protocol === 'https:' ? https : http;
-
-    const req = lib.request({
-      hostname: url.hostname,
-      port: url.port || (url.protocol === 'https:' ? 443 : 80),
-      path: url.pathname,
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(body)
-      }
-    }, res => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          const parsed = JSON.parse(data);
-          resolve(parsed.response || '');
-        } catch(e) {
-          reject(new Error('Invalid response from Ollama'));
-        }
-      });
-    });
-
-    req.on('error', err => reject(new Error(`Cannot reach Ollama: ${err.message}. Is it running?`)));
-    req.setTimeout(120000, () => { req.destroy(); reject(new Error('Ollama request timed out after 2 minutes')); });
-    req.write(body);
-    req.end();
-  });
+    } catch(e) {}
+  }
+  return null;
 }
 
-// ── Status check ──
+if (DISCOVERED_OLLAMA_URL.includes('10.1.10.226') || DISCOVERED_OLLAMA_URL.includes('ollama:11434')) {
+  scanForOllama().catch(() => {});
+  setInterval(() => scanForOllama().catch(() => {}), 300000);
+}
+
+// ── Status check (unauthenticated for health/discovery check) ──
 router.get('/status', async (req, res) => {
+  console.log('[AI] Status request received');
+  const currentUrl = getOllamaUrl();
   try {
-    const url = new URL(`${OLLAMA_URL}/api/tags`);
+    const url = new URL(`${currentUrl}/api/tags`);
     const lib = url.protocol === 'https:' ? https : http;
 
     const models = await new Promise((resolve, reject) => {
-      const r = lib.get(`${OLLAMA_URL}/api/tags`, resp => {
+      const r = lib.get(url, resp => {
         let d = '';
         resp.on('data', c => d += c);
         resp.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } });
       });
       r.on('error', reject);
-      r.setTimeout(5000, () => { r.destroy(); reject(new Error('timeout')); });
+      r.setTimeout(3000, () => { r.destroy(); reject(new Error('timeout')); });
     });
 
+    const settings = db.prepare('SELECT ollama_model FROM settings WHERE id=1').get();
+    const currentModel = settings?.ollama_model || OLLAMA_MODEL_DEFAULT;
     const modelList = (models.models || []).map(m => m.name);
-    const currentModel = OLLAMA_MODEL;
     const modelReady = modelList.some(m => m === currentModel || m.split(':')[0] === currentModel.split(':')[0]);
 
     res.json({
@@ -193,12 +93,17 @@ router.get('/status', async (req, res) => {
       model: currentModel,
       model_ready: modelReady,
       available_models: modelList,
-      ollama_url: OLLAMA_URL,
+      ollama_url: currentUrl,
+      discovered_url: DISCOVERED_OLLAMA_URL
     });
   } catch(e) {
-    res.json({ online: false, model: OLLAMA_MODEL, error: e.message });
+    const settings = db.prepare('SELECT ollama_model FROM settings WHERE id=1').get();
+    const currentModel = settings?.ollama_model || OLLAMA_MODEL_DEFAULT;
+    res.json({ online: false, model: currentModel, error: e.message, tried_url: currentUrl });
   }
 });
+
+router.use(auth);
 
 // ── Install Ollama ──
 router.post('/install', async (req, res) => {
@@ -217,7 +122,7 @@ router.post('/pull-model', async (req, res) => {
   const modelName = model || OLLAMA_MODEL;
   res.setHeader('Content-Type', 'text/event-stream');
   try {
-    const url = new URL(`${OLLAMA_URL}/api/pull`);
+    const url = new URL(`${getOllamaUrl()}/api/pull`);
     const lib = url.protocol === 'https:' ? https : http;
     const body = JSON.stringify({ name: modelName, stream: true });
     const pullReq = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, pullRes => {
@@ -288,10 +193,17 @@ router.get('/ram-stats', async (req, res) => {
     if (fs.existsSync(trainPath)) stats.storage.training_bytes = fs.statSync(trainPath).size;
 
     // Estimate model sizes from Ollama
-    const ourl = new URL(`${OLLAMA_URL}/api/tags`);
+    const currentUrl = getOllamaUrl();
+    const ourl = new URL(`${currentUrl}/api/tags`);
     const ores = await new Promise((resolve) => {
       const lib = ourl.protocol === 'https:' ? https : http;
-      lib.get(ourl, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({}); } }); }).on('error', () => resolve({}));
+      const r = lib.get(ourl, res => {
+        let d = '';
+        res.on('data', c => d += c);
+        res.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({}); } });
+      });
+      r.on('error', () => resolve({}));
+      r.setTimeout(3000, () => { r.destroy(); resolve({}); });
     });
     if (ores.models) stats.storage.models_bytes = ores.models.reduce((acc, m) => acc + (m.size || 0), 0);
   } catch(e) {}
@@ -318,6 +230,84 @@ router.get('/ram-stats', async (req, res) => {
   } catch(e) {}
   res.json(stats);
 });
+
+// Helper to get shop context for AI
+async function getAIContext() {
+  const settings = db.prepare('SELECT * FROM settings WHERE id=1').get();
+  const manufacturers = db.prepare('SELECT name, device_types FROM manufacturers WHERE active=1').all();
+  const shopInfo = `Supported Manufacturers: ${manufacturers.map(m => `${m.name} (${JSON.parse(m.device_types || '[]').join(', ')})`).join('; ')}\nAvailable Device Types: ${settings?.device_types || '[]'}`;
+  
+  const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+  const trainPath = path.join(uploadsBase, 'ai-training.json');
+  let training = '';
+  if (fs.existsSync(trainPath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(trainPath, 'utf8'));
+      training = data.system_context || '';
+    } catch(e) {}
+  }
+
+  // Include snippets from learned knowledge base
+  let kbSnippets = '';
+  const kbPath = path.join(uploadsBase, 'knowledge-base');
+  if (fs.existsSync(kbPath)) {
+    const files = fs.readdirSync(kbPath).slice(-5); // Last 5 learned docs
+    files.forEach(f => {
+      try {
+        const content = fs.readFileSync(path.join(kbPath, f), 'utf8').slice(0, 1000);
+        kbSnippets += `\n--- Learned from ${f} ---\n${content}\n`;
+      } catch(e) {}
+    });
+  }
+
+  return {
+    shop_name: settings?.company_name || 'the shop',
+    shop_info: shopInfo,
+    training_context: training + (kbSnippets ? `\nKnowledge Base:\n${kbSnippets}` : ''),
+    settings
+  };
+}
+
+// Helper to call Ollama
+async function ollamaGenerate(prompt, system, images = []) {
+  const currentUrl = getOllamaUrl();
+  const settings = db.prepare('SELECT ollama_model FROM settings WHERE id=1').get();
+  const model = images.length > 0 ? 'llama3.2-vision' : (settings?.ollama_model || OLLAMA_MODEL_DEFAULT);
+
+  const body = JSON.stringify({
+    model,
+    prompt,
+    system,
+    images,
+    stream: false,
+    options: { temperature: 0.6, num_predict: 800 }
+  });
+
+  return new Promise((resolve, reject) => {
+    const url = new URL(`${currentUrl}/api/generate`);
+    const lib = url.protocol === 'https:' ? https : http;
+    const req = lib.request({
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+    }, resp => {
+      let d = '';
+      resp.on('data', c => d += c);
+      resp.on('end', () => {
+        try {
+          const json = JSON.parse(d);
+          resolve(json.response || '');
+        } catch(e) { reject(new Error('Invalid JSON from Ollama')); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(90000, () => { req.destroy(); reject(new Error('AI generation timeout (Ollama)')); });
+    req.write(body);
+    req.end();
+  });
+}
 
 // ── NEW: AI CHAT / TRAINING PLAYGROUND ──
 router.post('/chat', async (req, res) => {
@@ -368,7 +358,7 @@ router.post('/chat', async (req, res) => {
   } catch (e) {}
 
   const ctx = await getAIContext();
-  const system = `You are a helpful AI assistant for ${ctx.shop_name}, an IT repair shop. Version 11.0.0.
+  const system = `You are a helpful AI assistant for ${ctx.shop_name}, an IT repair shop. Version 1.0.0-Beta-Build-04-20-2026.
 Shop Policy & Capability:
 ${ctx.shop_info}
 
@@ -389,7 +379,7 @@ You have access to a background tool that can OCR images and parse PDFs to add t
 
   try {
     const response = await ollamaGenerate(prompt, system);
-    res.json({ result: response, model: OLLAMA_MODEL });
+    res.json({ result: response, model: OLLAMA_MODEL_DEFAULT });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
 
@@ -410,7 +400,7 @@ router.post('/diagnose', upload.single('image'), async (req, res) => {
 
   try {
     const response = await ollamaGenerate(prompt, system, images);
-    res.json({ result: response, model: images.length > 0 ? 'llama3.2-vision' : OLLAMA_MODEL });
+    res.json({ result: response, model: images.length > 0 ? 'llama3.2-vision' : OLLAMA_MODEL_DEFAULT });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
 
@@ -435,7 +425,7 @@ RULES:
   const prompt = `Repair: ${repair_title || 'General'}\nDevice: ${device_type || 'Device'}\n\nRough notes to expand and format:\n"${raw_notes}"`;
   try {
     const response = await ollamaGenerate(prompt, system);
-    res.json({ result: response, model: OLLAMA_MODEL });
+    res.json({ result: response, model: OLLAMA_MODEL_DEFAULT });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
 
@@ -461,7 +451,7 @@ router.post('/reorder-suggestions', async (req, res) => {
   const prompt = `Inventory:\n${items.map(i => `${i.name} | Stock: ${i.quantity} | Min: ${i.quantity_min}`).join('\n')}`;
   try {
     const response = await ollamaGenerate(prompt, system);
-    res.json({ result: response, model: OLLAMA_MODEL });
+    res.json({ result: response, model: OLLAMA_MODEL_DEFAULT });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
 
@@ -473,7 +463,7 @@ router.post('/insights', async (req, res) => {
   const prompt = `Generate business summary for period: ${period || 'month'}`;
   try {
     const response = await ollamaGenerate(prompt, system);
-    res.json({ result: response, model: OLLAMA_MODEL });
+    res.json({ result: response, model: OLLAMA_MODEL_DEFAULT });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
 
@@ -516,16 +506,20 @@ router.get('/guides', (req, res) => {
       if (q && !name.toLowerCase().includes(q.toLowerCase()) && !content.toLowerCase().includes(q.toLowerCase())) return;
       if (brand && !name.toLowerCase().includes(brand.toLowerCase())) return;
 
+      const isImage = filename.toLowerCase().match(/\.(jpg|jpeg|png|gif|webp)/);
+      const isPdf = filename.toLowerCase().includes('.pdf');
+
       diskGuides.push({
         id: 'file:' + filename,
-        device_brand: 'Technical Doc',
+        device_brand: isImage ? 'Image Asset' : isPdf ? 'PDF Manual' : 'Technical Doc',
         device_model: name,
-        issue: 'Manual/Schematic',
+        issue: 'Technical Reference',
         guide_content: content,
         source_url: 'Knowledge Base',
-        source_type: 'Technical Documentation',
+        source_type: isImage ? 'Hardware Photo' : 'Technical Documentation',
         created_at: new Date(parseInt(timestamp) || Date.now()).toISOString(),
-        is_disk_file: true
+        is_disk_file: true,
+        mime_type: isImage ? 'image/jpeg' : isPdf ? 'application/pdf' : 'text/plain'
       });
     });
   } catch(e) {}
@@ -770,28 +764,54 @@ router.post('/models/create', async (req, res) => {
 router.get('/model-updates', async (req, res) => {
   try {
     const ores = await new Promise((resolve, reject) => {
-      const url = new URL(`${OLLAMA_URL}/api/tags`);
+      const url = new URL(`${getOllamaUrl()}/api/tags`);
       const lib = url.protocol === 'https:' ? https : http;
       lib.get(url, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => resolve(JSON.parse(d))); }).on('error', reject);
     });
-    res.json({ installed: ores.models, current_model: OLLAMA_MODEL, ollama_online: true });
-  } catch(e) { res.json({ installed: [], ollama_online: false, error: e.message }); }
+
+    // Also get currently running models (in RAM)
+    const running = await new Promise((resolve) => {
+      const url = new URL(`${getOllamaUrl()}/api/ps`);
+      const lib = url.protocol === 'https:' ? https : http;
+      lib.get(url, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { resolve({ models: [] }); } }); }).on('error', () => resolve({ models: [] }));
+    });
+
+    res.json({ 
+      installed: ores.models, 
+      running: running.models || [],
+      current_model: OLLAMA_MODEL, 
+      ollama_online: true 
+    });
+  } catch(e) { res.json({ installed: [], running: [], ollama_online: false, error: e.message }); }
 });
 
 router.post('/model-action', async (req, res) => {
   const { action, model } = req.body;
-  const body = JSON.stringify({ model: model || OLLAMA_MODEL, keep_alive: action === 'start' ? '10m' : 0 });
-  const url = new URL(`${OLLAMA_URL}/api/generate`);
+  if (!model) return res.status(400).json({ error: 'Model name required' });
+
+  // Action: 'load' (warm up) or 'unload' (evict from RAM)
+  const keep_alive = action === 'load' ? '1h' : 0;
+  
+  const body = JSON.stringify({ model, keep_alive });
+  const url = new URL(`${getOllamaUrl()}/api/generate`);
   const lib = url.protocol === 'https:' ? https : http;
-  const req2 = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, r => r.resume());
+
+  const req2 = lib.request({ 
+    hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'POST', 
+    headers: { 'Content-Type': 'application/json' } 
+  }, r => {
+    r.on('data', () => {}); // Consume stream
+    r.on('end', () => res.json({ ok: true }));
+  });
+  
+  req2.on('error', e => res.status(500).json({ error: e.message }));
   req2.write(body); req2.end();
-  res.json({ ok: true });
 });
 
 router.delete('/models/:modelName', async (req, res) => {
   const model = decodeURIComponent(req.params.modelName);
   const body = JSON.stringify({ name: model });
-  const url = new URL(`${OLLAMA_URL}/api/delete`);
+  const url = new URL(`${getOllamaUrl()}/api/delete`);
   const lib = url.protocol === 'https:' ? https : http;
   const req2 = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'DELETE', headers: { 'Content-Type': 'application/json' } }, r => r.resume());
   req2.write(body); req2.end();
@@ -799,7 +819,7 @@ router.delete('/models/:modelName', async (req, res) => {
 });
 
 router.post('/set-model', (req, res) => {
-  db.prepare("UPDATE settings SET value=? WHERE key='ollama_model'").run(req.body.model);
+  db.prepare("UPDATE settings SET ollama_model=? WHERE id=1").run(req.body.model);
   process.env.OLLAMA_MODEL = req.body.model;
   res.json({ ok: true });
 });
@@ -808,7 +828,7 @@ router.post('/set-model', (req, res) => {
 async function pullModel(model) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ name: model });
-    const url = new URL(`${OLLAMA_URL}/api/pull`);
+    const url = new URL(`${getOllamaUrl()}/api/pull`);
     const lib = url.protocol === 'https:' ? https : http;
     const req = lib.request({ hostname: url.hostname, port: url.port || 80, path: url.pathname, method: 'POST', headers: { 'Content-Type': 'application/json' } }, resp => {
       resp.on('data', () => {}); resp.on('end', resolve);
@@ -820,7 +840,7 @@ async function pullModel(model) {
 async function initModels() {
   try {
     const resp = await new Promise((resolve, reject) => {
-      const url = new URL(`${OLLAMA_URL}/api/tags`);
+      const url = new URL(`${getOllamaUrl()}/api/tags`);
       const lib = url.protocol === 'https:' ? https : http;
       lib.get(url, r => { let d = ''; r.on('data', c => d += c); r.on('end', () => { try { resolve(JSON.parse(d)); } catch(e) { reject(e); } }); }).on('error', reject);
     });
