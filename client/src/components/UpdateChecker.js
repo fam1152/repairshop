@@ -193,7 +193,7 @@ export default function UpdateChecker() {
             </div>
             <div style={{ color: 'var(--text2)' }}>{checkResult.error || checkResult.message}</div>
             
-            {checkResult.github && (
+            {checkResult.github && !info?.docker_socket && (
               <div style={{ marginTop: 10, padding: '10px', background: 'var(--bg1)', borderRadius: 6, border: '1px solid var(--border)' }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Latest GitHub Release: {checkResult.github.version}</div>
                 <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>Published {new Date(checkResult.github.published_at).toLocaleDateString()}</div>

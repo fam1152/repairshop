@@ -223,7 +223,7 @@ router.get('/info', (req, res) => {
     started_at: new Date(Date.now() - process.uptime() * 1000).toISOString(),
     docker_socket: isDockerAvailable(),
     is_git: fs.existsSync(path.join(__dirname, '../.git')),
-    app_version: 'v11.0.0'
+    app_version: 'v11.1.0'
   });
 });
 
