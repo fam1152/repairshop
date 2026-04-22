@@ -147,11 +147,11 @@ export default function UpdateChecker() {
               ['Node.js', info.node_version],
               ['Uptime', formatUptime(info.uptime_seconds)],
               ['Started', info.started_at ? new Date(info.started_at).toLocaleString() : '—'],
-              ['Docker socket', info.docker_socket ? '✓ Connected' : '✗ Not mounted'],
+              [info.is_podman ? 'Podman socket' : 'Docker socket', info.docker_socket ? '✓ Connected' : '✗ Not mounted'],
             ].map(([label, value]) => (
               <div key={label} style={{ background: 'var(--bg3)', borderRadius: 8, padding: '10px 12px' }}>
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 3 }}>{label}</div>
-                <div style={{ fontSize: 13, fontWeight: 500, wordBreak: 'break-all', color: label === 'Docker socket' ? (info.docker_socket ? 'var(--success)' : 'var(--danger)') : 'var(--text)' }}>{value}</div>
+                <div style={{ fontSize: 13, fontWeight: 500, wordBreak: 'break-all', color: (label === 'Docker socket' || label === 'Podman socket') ? (info.docker_socket ? 'var(--success)' : 'var(--danger)') : 'var(--text)' }}>{value}</div>
               </div>
             ))}
           </div>
@@ -160,14 +160,23 @@ export default function UpdateChecker() {
         )}
       </div>
 
-      {/* Docker socket warning */}
+      {/* Docker/Podman socket warning */}
       {info && !info.docker_socket && (
         <div style={{ background: 'var(--warning-light)', border: '1px solid var(--warning)', borderRadius: 8, padding: '12px 14px', marginBottom: 16, fontSize: 13, color: 'var(--warning)' }}>
-          <strong>⚠️ Docker socket not mounted.</strong> To enable automatic updates, add this to your docker-compose.yml under <code>volumes:</code>:
-          <pre style={{ background: 'var(--warning-light)', marginTop: 8, fontSize: 12, fontFamily: 'monospace' }}>- /var/run/docker.sock:/var/run/docker.sock</pre>
-          Then add under <code>environment:</code>:
-          <pre style={{ background: 'var(--warning-light)', marginTop: 4, fontSize: 12, fontFamily: 'monospace' }}>- DOCKER_IMAGE=fam1152/repairshop:latest</pre>
-          Then run <code>docker compose up -d</code> on your host to apply the new compose file.
+          <strong>⚠️ {info.is_podman ? 'Podman' : 'Docker'} socket not mounted.</strong> To enable automatic updates, add this to your {info.is_podman ? 'podman run command or ' : ''}docker-compose.yml under <code>volumes:</code>:
+          <pre style={{ background: 'var(--warning-light)', marginTop: 8, fontSize: 12, fontFamily: 'monospace' }}>
+            {info.is_podman ? '- /run/user/$(id -u)/podman/podman.sock:/var/run/docker.sock' : '- /var/run/docker.sock:/var/run/docker.sock'}
+          </pre>
+          
+          {info.is_podman && (
+            <div style={{ marginTop: 10, lineHeight: 1.5 }}>
+              💡 <strong>Podman Auto-Update:</strong> If you prefer Podman's built-in system, add <code>--label "io.containers.autoupdate=image"</code> to your run command. Then, <code>podman auto-update</code> will work from your host's terminal.
+            </div>
+          )}
+
+          <div style={{ marginTop: 10 }}>
+            Then run <code>docker compose up -d</code> (or podman-compose) to apply the change.
+          </div>
         </div>
       )}
 
@@ -402,6 +411,7 @@ function Changelog() {
         'Added Troubleshooting tab in Settings — live log viewer, system info, reboot with auto-backup',
         'Reboot now restarts both RepairShop and Ollama containers',
         'Added docker-compose.yml editor in Troubleshooting tab',
+
         'Added per-user dark mode preference — each account saves its own setting',
         'Added AI training data — save custom Q&A examples and shop context',
         'Added AI model controls — Start, Restart, Unload from memory buttons',

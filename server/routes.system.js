@@ -163,9 +163,9 @@ router.post('/reboot', isAdmin, async (req, res) => {
 // Read docker-compose.yml
 router.get('/docker-compose', isAdmin, (req, res) => {
   const composePaths = [
-    '/mnt/tank/docker-compose.yml',
     path.join(__dirname, '../../docker-compose.yml'),
     '/app/docker-compose.yml',
+    './docker-compose.yml'
   ];
 
   for (const p of composePaths) {
@@ -341,9 +341,9 @@ router.post('/compose-update', isAdmin, (req, res) => {
   if (!sudo_password) return res.status(400).json({ error: 'sudo password required', needs_password: true });
 
   const { exec } = require('child_process');
-  const composePaths = ['/mnt/tank/docker-compose.yml', '/app/docker-compose.yml'];
-  const composePath = composePaths.find(p => fs.existsSync(p)) || '/mnt/tank/docker-compose.yml';
-  const dir = require('path').dirname(composePath);
+  const composePaths = ['./docker-compose.yml', '/app/docker-compose.yml', '../../docker-compose.yml'];
+  const composePath = composePaths.find(p => fs.existsSync(p)) || './docker-compose.yml';
+  const dir = require('path').dirname(path.resolve(composePath));
 
   addLog('info', `[Update] Running docker compose pull + up via sudo in ${dir}`);
   res.json({ ok: true, message: 'Running docker compose pull + up…' });

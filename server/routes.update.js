@@ -8,16 +8,36 @@ const { exec } = require('child_process');
 router.use(auth);
 
 // Get the image name this container is running as
-function getImageName() {
-  return process.env.DOCKER_IMAGE || 'fam1152/repairshop:latest';
+async function getImageName() {
+  if (process.env.DOCKER_IMAGE) return process.env.DOCKER_IMAGE;
+  
+  // Try to ask the socket who I am (works in Docker and Podman if socket is mounted)
+  try {
+    if (fs.existsSync('/var/run/docker.sock')) {
+      const Docker = require('dockerode');
+      const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+      const containers = await docker.listContainers();
+      const os = require('os');
+      const hostname = os.hostname();
+      // Hostname is usually the container ID
+      const me = containers.find(c => c.Id.startsWith(hostname) || hostname.startsWith(c.Id.slice(0, 10)));
+      if (me && me.Image) {
+        return me.Image;
+      }
+    }
+  } catch(e) {}
+
+  return 'fam1152/repairshop:latest';
 }
 
-// Fetch JSON from a URL (no extra deps needed — uses built-in https)
+function isPodman() {
+  return fs.existsSync('/.containerenv');
+}
+
+// Fetch JSON from a URL
 function fetchJson(url, headers = {}) {
   return new Promise((resolve, reject) => {
-    const opts = {
-      headers: { 'Accept': 'application/json', ...headers }
-    };
+    const opts = { headers: { 'Accept': 'application/json', ...headers } };
     https.get(url, opts, res => {
       let data = '';
       res.on('data', chunk => data += chunk);
@@ -29,41 +49,27 @@ function fetchJson(url, headers = {}) {
   });
 }
 
-// Get Docker Hub token for a private or public repo
 async function getDockerHubToken(image) {
   const [repo] = image.split(':');
   try {
-    const r = await fetchJson(
-      `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull`
-    );
+    const r = await fetchJson(`https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull`);
     return r.data.token || null;
-  } catch(e) {
-    return null;
-  }
+  } catch(e) { return null; }
 }
 
-// Get the remote digest from Docker Hub registry API
 async function getRemoteDigest(image) {
   const [repo, tag = 'latest'] = image.split(':');
   try {
     const token = await getDockerHubToken(image);
     if (!token) return null;
-
-    const r = await fetchJson(
-      `https://registry-1.docker.io/v2/${repo}/manifests/${tag}`,
-      {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'application/vnd.docker.distribution.manifest.v2+json'
-      }
-    );
-    // The digest is in the response header
+    const r = await fetchJson(`https://registry-1.docker.io/v2/${repo}/manifests/${tag}`, {
+      'Authorization': `Bearer ${token}`,
+      'Accept': 'application/vnd.docker.distribution.manifest.v2+json'
+    });
     return r.headers['docker-content-digest'] || null;
-  } catch(e) {
-    return null;
-  }
+  } catch(e) { return null; }
 }
 
-// Get the local image digest via Docker socket
 function getLocalDigest(image) {
   try {
     const Docker = require('dockerode');
@@ -75,26 +81,18 @@ function getLocalDigest(image) {
         resolve(digest);
       });
     });
-  } catch(e) {
-    return Promise.resolve(null);
-  }
+  } catch(e) { return Promise.resolve(null); }
 }
 
-// Check if Docker socket is available
 function isDockerAvailable() {
-  try {
-    const fs = require('fs');
-    return fs.existsSync('/var/run/docker.sock');
-  } catch(e) { return false; }
+  return fs.existsSync('/var/run/docker.sock');
 }
 
-// ── GET LATEST FROM GITHUB ──
+// ── ROUTES ──
+
 router.get('/github-latest', async (req, res) => {
   try {
-    // We use the GitHub API to get the latest release
-    const r = await fetchJson('https://api.github.com/repos/fam1152/repairshop/releases/latest', {
-      'User-Agent': 'RepairShop-App'
-    });
+    const r = await fetchJson('https://api.github.com/repos/fam1152/repairshop/releases/latest', { 'User-Agent': 'RepairShop-App' });
     if (r.status !== 200) throw new Error('GitHub API returned ' + r.status);
     res.json({
       version: r.data.tag_name,
@@ -104,32 +102,24 @@ router.get('/github-latest', async (req, res) => {
       body: r.data.body,
       assets: r.data.assets.map(a => ({ name: a.name, url: a.browser_download_url, size: a.size }))
     });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// ── CHECK FOR UPDATE ──
 router.get('/check', async (req, res) => {
-  const image = getImageName();
+  const image = await getImageName();
   const dockerAvailable = isDockerAvailable();
 
   if (!dockerAvailable) {
-    // If not docker, we can still check GitHub
     return res.json({
       available: false,
       docker_socket: false,
       image,
-      message: 'Docker socket not mounted. Add the socket volume to docker-compose.yml to enable automatic updates.'
+      message: 'Management socket not mounted. See instructions below to enable automatic updates.'
     });
   }
 
   try {
-    const [localDigest, remoteDigest] = await Promise.all([
-      getLocalDigest(image),
-      getRemoteDigest(image)
-    ]);
-
+    const [localDigest, remoteDigest] = await Promise.all([ getLocalDigest(image), getRemoteDigest(image) ]);
     const canDetermine = !!(localDigest && remoteDigest);
     const updateAvailable = canDetermine && localDigest !== remoteDigest;
 
@@ -141,87 +131,46 @@ router.get('/check', async (req, res) => {
       local_digest: localDigest ? localDigest.slice(0, 19) + '…' : null,
       remote_digest: remoteDigest ? remoteDigest.slice(0, 19) + '…' : null,
       checked_at: new Date().toISOString(),
-      message: updateAvailable
-        ? 'A new version is available on Docker Hub.'
-        : canDetermine
-          ? 'You are running the latest version.'
-          : 'Could not determine update status — the local image was likely built from source and has no registry digest yet.'
+      message: updateAvailable ? 'A new version is available on Docker Hub.' : canDetermine ? 'You are running the latest version.' : 'Could not determine update status.'
     });
-  } catch(e) {
-    res.status(500).json({ available: false, error: e.message });
-  }
+  } catch(e) { res.status(500).json({ available: false, error: e.message }); }
 });
 
-// ── PULL AND RESTART ──
-// Pulls the latest image then restarts the container
 router.post('/apply', async (req, res) => {
-  const image = getImageName();
+  const image = await getImageName();
+  if (!isDockerAvailable()) return res.status(400).json({ error: 'Socket not available' });
 
-  if (!isDockerAvailable()) {
-    return res.status(400).json({ error: 'Docker socket not available' });
-  }
+  res.json({ ok: true, message: 'Update started. Restarting...' });
 
-  // Send response immediately — the container will restart and connection will drop
-  res.json({
-    ok: true,
-    message: 'Update started. The app will restart in about 30–60 seconds. Refresh this page to reconnect.'
-  });
-
-  // Pull and restart after response is sent
   setTimeout(async () => {
     try {
       const Docker = require('dockerode');
       const docker = new Docker({ socketPath: '/var/run/docker.sock' });
-
-      console.log(`[Update] Pulling ${image}…`);
-
-      // Pull the new image
       await new Promise((resolve, reject) => {
         docker.pull(image, (err, stream) => {
           if (err) return reject(err);
-          docker.modem.followProgress(stream, (err) => {
-            if (err) reject(err);
-            else resolve();
-          });
+          docker.modem.followProgress(stream, (err) => err ? reject(err) : resolve());
         });
       });
-
-      console.log('[Update] Pull complete. Restarting container…');
-
-      // Find and restart our own container
       const containers = await docker.listContainers();
-      const self = containers.find(c =>
-        c.Image === image ||
-        c.Names.some(n => n.includes('repairshop'))
-      );
-
-      if (self) {
-        const container = docker.getContainer(self.Id);
-        // Small delay then restart
-        setTimeout(() => {
-          container.restart({ t: 5 }, (err) => {
-            if (err) console.error('[Update] Restart error:', err.message);
-            else console.log('[Update] Container restarted successfully');
-          });
-        }, 2000);
-      } else {
-        console.warn('[Update] Could not find own container to restart');
-      }
-    } catch(e) {
-      console.error('[Update] Update failed:', e.message);
-    }
+      const hostname = require('os').hostname();
+      const me = containers.find(c => c.Id.startsWith(hostname) || hostname.startsWith(c.Id.slice(0, 10)));
+      if (me) {
+        const container = docker.getContainer(me.Id);
+        setTimeout(() => { container.restart({ t: 5 }, () => {}); }, 1000);
+      } else { process.exit(0); }
+    } catch(e) { console.error('[Update] Failed:', e.message); }
   }, 500);
 });
 
-// ── GET CURRENT VERSION INFO ──
-router.get('/info', (req, res) => {
+router.get('/info', async (req, res) => {
   res.json({
-    image: getImageName(),
+    image: await getImageName(),
     node_version: process.version,
     uptime_seconds: Math.floor(process.uptime()),
-    uptime_human: formatUptime(process.uptime()),
     started_at: new Date(Date.now() - process.uptime() * 1000).toISOString(),
     docker_socket: isDockerAvailable(),
+    is_podman: isPodman(),
     is_git: fs.existsSync(path.join(__dirname, '../.git')),
     app_version: 'v11.1.0'
   });
@@ -238,27 +187,13 @@ function formatUptime(seconds) {
   return parts.join(' ');
 }
 
-// ── GIT UPDATE (SOURCE INSTALLS) ──
 router.post('/git-pull', async (req, res) => {
   const gitDir = path.join(__dirname, '../.git');
-  if (!fs.existsSync(gitDir)) {
-    return res.status(400).json({ error: 'Not a git repository' });
-  }
-
-  res.json({ ok: true, message: 'Update started. pulling changes and rebuilding... The app will restart when finished.' });
-
+  if (!fs.existsSync(gitDir)) return res.status(400).json({ error: 'Not a git repository' });
+  res.json({ ok: true, message: 'Updating from git...' });
   const rootDir = path.join(__dirname, '..');
   const cmd = `cd ${rootDir} && git pull && npm install && cd client && npm install && npm run build`;
-  
-  exec(cmd, (err, stdout, stderr) => {
-    if (err) {
-      console.error('[Update] Git update failed:', err.message);
-      console.error(stderr);
-    } else {
-      console.log('[Update] Git update successful. Restarting...');
-      setTimeout(() => process.exit(0), 1000);
-    }
-  });
+  exec(cmd, () => { setTimeout(() => process.exit(0), 1000); });
 });
 
 module.exports = router;
