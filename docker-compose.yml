@@ -18,14 +18,14 @@ services:
       - JWT_SECRET=change_me_to_something_long_and_random_before_deploying
       - GOOGLE_CLIENT_ID=
       - GOOGLE_CLIENT_SECRET=
-      - GOOGLE_REDIRECT_URI=http://YOUR-TRUENAS-IP:3000/api/appointments/google/callback
+      - GOOGLE_REDIRECT_URI=http://YOUR-SERVER-IP:3000/api/appointments/google/callback
       - DOCKER_IMAGE=fam1152/repairshop:latest
       # HTTPS / SSL — enables camera on LAN devices
       - SSL_CERT=/data/ssl/cert.pem
       - SSL_KEY=/data/ssl/key.pem
       - HTTPS_PORT=3443
-      # Ollama AI — points to the existing service on the host
-      - OLLAMA_URL=http://10.1.10.226:11434
+      # Ollama AI — points to the existing service on the host or external machine
+      - OLLAMA_URL=http://localhost:11434
       - OLLAMA_MODEL=llama3.2
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
