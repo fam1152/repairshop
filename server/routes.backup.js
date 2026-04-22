@@ -159,7 +159,13 @@ router.post('/restore', restoreUpload.single('backup'), async (req, res) => {
 
     // Extract database
     const dbEntry = zip.getEntry('repairshop.sqlite');
+    
+    // CRITICAL: Close the database connection before overwriting the file
+    console.log('[Restore] Closing database connection for overwrite...');
+    try { db.close(); } catch(e) { console.error('[Restore] Error closing DB:', e.message); }
+
     fs.writeFileSync(dbPath, dbEntry.getData());
+    console.log('[Restore] Database file overwritten successfully');
 
     // Extract uploads and print-queue if present
     const dataEntries = entries.filter(e => (e.startsWith('uploads/') || e.startsWith('print-queue/')) && !e.endsWith('/'));
@@ -175,17 +181,18 @@ router.post('/restore', restoreUpload.single('backup'), async (req, res) => {
     // Clean up temp file
     fs.unlinkSync(uploadedZip);
 
-    // Clean up old safety backup if restore succeeded
-    if (fs.existsSync(safetyBackup)) {
-      setTimeout(() => { try { fs.unlinkSync(safetyBackup); } catch (e) {} }, 30000);
-    }
-
     res.json({
       ok: true,
-      message: 'Restore successful. Please refresh the page.',
+      message: 'Restore successful. The server will restart automatically in 2 seconds to reload data.',
       meta,
       files_restored: dataEntries.length,
     });
+
+    // Automatically trigger restart to reload the new database into memory
+    setTimeout(() => {
+      console.log('[Restore] Restarting process to finalize restore...');
+      process.exit(0);
+    }, 2000);
 
   } catch (err) {
     // Clean up temp file

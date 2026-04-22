@@ -106,7 +106,10 @@ export default function BackupRestore() {
       });
       setRestoreResult(r.data);
       setSelectedFile(null);
-      load();
+      // Automatically reload after a few seconds as the server is restarting
+      setTimeout(() => {
+        window.location.reload();
+      }, 8000);
     } catch (err) {
       setRestoreError(err.response?.data?.error || 'Restore failed. The backup file may be corrupted.');
       setSelectedFile(null);
