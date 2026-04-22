@@ -100,7 +100,7 @@ export function SettingsProvider({ children }) {
       update,
       toggleDarkMode,
       reload: load,
-      darkMode: userPrefs?.dark_mode ?? settings?.dark_mode ?? 0,
+      darkMode: userPrefs?.dark_mode ?? settings?.dark_mode ?? 1,
     }}>
       {children}
     </SettingsContext.Provider>

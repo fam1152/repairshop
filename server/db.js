@@ -33,7 +33,7 @@ db.exec(`
     invoice_color TEXT DEFAULT '#2563eb',
     invoice_notes TEXT DEFAULT 'Thank you for your business!',
     logo_url TEXT DEFAULT '',
-    dark_mode INTEGER DEFAULT 0,
+    dark_mode INTEGER DEFAULT 1,
     currency TEXT DEFAULT 'USD'
   );
 
@@ -401,7 +401,7 @@ try { db.exec(`ALTER TABLE repairs ADD COLUMN deleted_at DATETIME DEFAULT NULL`)
 db.exec(`CREATE TABLE IF NOT EXISTS user_preferences (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL UNIQUE,
-  dark_mode INTEGER DEFAULT 0,
+  dark_mode INTEGER DEFAULT 1,
   preferences TEXT DEFAULT '{}'
 )`);
 

@@ -160,36 +160,52 @@ router.get('/activity-log', (req, res) => {
 module.exports = router;
 
 // ── USER PREFERENCES (dark mode, per-user settings) ──
-router.get('/prefs', (req, res) => {
+// Get preferences for specific user (admin only) or self
+router.get('/:id/prefs', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
   try {
-    let prefs = db.prepare('SELECT * FROM user_preferences WHERE user_id=?').get(req.user.id);
+    let prefs = db.prepare('SELECT * FROM user_preferences WHERE user_id=?').get(req.params.id);
     if (!prefs) {
-      // Return defaults — don't create row yet
       const global = db.prepare('SELECT dark_mode FROM settings WHERE id=1').get();
-      return res.json({ user_id: req.user.id, dark_mode: global?.dark_mode || 0, preferences: {} });
+      return res.json({ user_id: req.params.id, dark_mode: global?.dark_mode || 1, preferences: {} });
     }
     try { prefs.preferences = JSON.parse(prefs.preferences || '{}'); } catch(e) { prefs.preferences = {}; }
     res.json(prefs);
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-router.put('/prefs', (req, res) => {
+// Update preferences for specific user (admin only) or self
+router.put('/:id/prefs', (req, res) => {
+  if (req.user.role !== 'admin' && req.user.id !== req.params.id) return res.status(403).json({ error: 'Forbidden' });
   try {
     const { dark_mode, preferences } = req.body;
     const prefsStr = JSON.stringify(preferences || {});
-    const existing = db.prepare('SELECT id FROM user_preferences WHERE user_id=?').get(req.user.id);
+    const existing = db.prepare('SELECT id FROM user_preferences WHERE user_id=?').get(req.params.id);
     if (existing) {
       db.prepare('UPDATE user_preferences SET dark_mode=?, preferences=? WHERE user_id=?')
-        .run(dark_mode ? 1 : 0, prefsStr, req.user.id);
+        .run(dark_mode ? 1 : 0, prefsStr, req.params.id);
     } else {
       const { v4: uuidv4 } = require('uuid');
       db.prepare('INSERT INTO user_preferences (id, user_id, dark_mode, preferences) VALUES (?,?,?,?)')
-        .run(uuidv4(), req.user.id, dark_mode ? 1 : 0, prefsStr);
+        .run(uuidv4(), req.params.id, dark_mode ? 1 : 0, prefsStr);
     }
     res.json({ ok: true, dark_mode: dark_mode ? 1 : 0 });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+router.get('/prefs', (req, res) => {
+  // Existing route logic simplified by redirecting to :id/prefs
+  res.redirect(`/api/users/${req.user.id}/prefs`);
+});
+
+router.put('/prefs', (req, res) => {
+  // Existing route logic simplified
+  const { dark_mode, preferences } = req.body;
+  const existing = db.prepare('SELECT id FROM user_preferences WHERE user_id=?').get(req.user.id);
+  if (existing) {
+    db.prepare('UPDATE user_preferences SET dark_mode=?, preferences=? WHERE user_id=?').run(dark_mode?1:0, JSON.stringify(preferences||{}), req.user.id);
+  } else {
+    db.prepare('INSERT INTO user_preferences (id, user_id, dark_mode, preferences) VALUES (?,?,?,?)').run(uuidv4(), req.user.id, dark_mode?1:0, JSON.stringify(preferences||{}));
   }
+  res.json({ ok: true });
 });

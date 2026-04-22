@@ -444,9 +444,24 @@ export function AISettings() {
   const [aiTab, setAiTab] = useState('status');
   const [config, setConfig] = useState({ ai_mode: 'offline', ai_cloud_provider: 'openai', ai_cloud_key: '', ai_search_provider: 'serper', ai_search_key: '', ai_auto_research: 0, ollama_url: '' });
   const [actionLoading, setActionLoading] = useState(null);
+  const [connectLog, setConnectLog] = useState([]);
+  const [checking, setChecking] = useState(false);
 
-  const loadStatus = () => {
-    axios.get('/api/ai/status').then(r => setStatus(r.data)).catch(() => setStatus({ online: false }));
+  const loadStatus = async () => {
+    setChecking(true);
+    try {
+      const r = await axios.get('/api/ai/status');
+      setStatus(r.data);
+      if (r.data.online) {
+        setConnectLog(prev => [...prev.slice(-9), `> [${new Date().toLocaleTimeString()}] Connected to Ollama at ${r.data.ollama_url}`]);
+      } else {
+        setConnectLog(prev => [...prev.slice(-9), `> [${new Date().toLocaleTimeString()}] Error: ${r.data.error || 'Ollama offline'}`]);
+      }
+    } catch (e) {
+      setStatus({ online: false });
+      setConnectLog(prev => [...prev.slice(-9), `> [${new Date().toLocaleTimeString()}] Connection failed: ${e.message}`]);
+    }
+    setChecking(false);
     axios.get('/api/ai/model-updates').then(r => setModelInfo(r.data)).catch(() => {});
   };
 
@@ -558,6 +573,18 @@ export function AISettings() {
               </div>
 
               <button className="btn btn-primary w-full mt-3" onClick={saveConfig}>Save Connectivity</button>
+              
+              <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>Connection Logs</div>
+                  <button className="btn btn-sm btn-outline" onClick={loadStatus} disabled={checking}>
+                    {checking ? 'Connecting...' : 'Connect Now'}
+                  </button>
+                </div>
+                <div style={{ background: '#000', color: '#0f0', padding: '10px', borderRadius: 6, fontFamily: 'monospace', fontSize: 11, minHeight: 100, maxHeight: 150, overflowY: 'auto' }}>
+                  {connectLog.length === 0 ? '> Idle' : connectLog.map((log, i) => <div key={i}>{log}</div>)}
+                </div>
+              </div>
             </div>
             
             <div className="card mb-3">
