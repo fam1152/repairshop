@@ -303,7 +303,7 @@ export default function BackupRestore() {
         <div className="card" style={{ marginTop: 16 }}>
           <div style={{ fontWeight: 700, marginBottom: 6, fontSize: 14 }}>⏰ Automatic scheduled backup</div>
           <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 14, lineHeight: 1.6 }}>
-            Automatically save a backup to a folder on your TrueNAS storage on a schedule. Keeps the last 10 backups.
+            Automatically save a backup to a folder on your host storage on a schedule. Keeps the last 10 backups.
           </p>
           <div className="form-group">
             <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
@@ -329,8 +329,8 @@ export default function BackupRestore() {
                 </select>
               </div>
               <div className="form-group" style={{ gridColumn: '1/-1' }}>
-                <label>Save location (path on TrueNAS, e.g. /mnt/tank/backups)</label>
-                <input className="form-control" value={schedule.save_path || ''} onChange={e => setSchedule(s => ({ ...s, save_path: e.target.value }))} placeholder="/mnt/tank/repairshop-backups" />
+                <label>Save location (path on host, e.g. /opt/repairshop/backups)</label>
+                <input className="form-control" value={schedule.save_path || ''} onChange={e => setSchedule(s => ({ ...s, save_path: e.target.value }))} placeholder="/var/lib/repairshop/backups" />
                 <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>This must be a path the container can write to. Mount it as an additional volume in your docker-compose.yml if needed.</div>
               </div>
             </div>
@@ -354,16 +354,6 @@ export default function BackupRestore() {
           </button>
         </div>
       )}
-
-      {/* TrueNAS automatic backup tip */}
-      <div className="card" style={{ marginTop: 16, background: 'var(--bg3)', border: '1px solid var(--border)' }}>
-        <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 13 }}>🏠 TrueNAS automatic backups</div>
-        <p style={{ fontSize: 13, color: 'var(--text2)', lineHeight: 1.7, marginBottom: 0 }}>
-          Your data lives at <code style={{ fontSize: 11, background: 'var(--bg2)', padding: '1px 6px', borderRadius: 4 }}>/mnt/tank/repairshop-data/</code> on TrueNAS.
-          You can set up automatic ZFS snapshots in TrueNAS → <strong>Data Protection → Periodic Snapshot Tasks</strong> to back up this dataset on a schedule.
-          ZFS snapshots are instant and take almost no extra space — recommended daily snapshots with 30-day retention.
-        </p>
-      </div>
     </div>
   );
 }

@@ -167,7 +167,7 @@ export default function UpdateChecker() {
           <pre style={{ background: 'var(--warning-light)', marginTop: 8, fontSize: 12, fontFamily: 'monospace' }}>- /var/run/docker.sock:/var/run/docker.sock</pre>
           Then add under <code>environment:</code>:
           <pre style={{ background: 'var(--warning-light)', marginTop: 4, fontSize: 12, fontFamily: 'monospace' }}>- DOCKER_IMAGE=fam1152/repairshop:latest</pre>
-          Then run <code>docker compose up -d</code> on TrueNAS to apply the new compose file.
+          Then run <code>docker compose up -d</code> on your host to apply the new compose file.
         </div>
       )}
 
@@ -450,7 +450,7 @@ function Changelog() {
         'Activity log — 30-day rolling log of every action by every user',
         'Admin sees all users\' activity, staff see only their own',
         'Appointments now record which account created them (Booked by column)',
-        'Scheduled automatic backups — daily or weekly to a TrueNAS path',
+        'Scheduled automatic backups — daily or weekly to a host path',
         'Keeps last 10 backups automatically, removes older ones',
         'Software license (Proprietary — copyright fam1152) added',
         'License tab in Settings',
@@ -463,7 +463,7 @@ function Changelog() {
         'One-click download full backup zip — database + all uploads + logos',
         'Drag-and-drop restore — validates zip before overwriting, safety copy created',
         'Shows record counts and database size before backup',
-        'TrueNAS ZFS snapshot guidance included',
+        'ZFS snapshot guidance included',
         'Scheduled backup settings stored in database',
       ]
     },

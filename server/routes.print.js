@@ -77,7 +77,7 @@ router.post('/print-all', (req, res) => {
 
   addLog('info', `[Print] Printing all files in queue (${files.length} files)`);
 
-  // On Linux/TrueNAS, use 'lp' command. 
+  // On Linux, use 'lp' command. 
   // We'll iterate and print each.
   let results = [];
   let errorCount = 0;

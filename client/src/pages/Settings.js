@@ -410,7 +410,7 @@ Copyright (c) 2026 fam1152. All rights reserved.`}</pre>
 
           <div style={{ textAlign: 'center', padding: 20, color: 'var(--text3)', fontSize: 12, lineHeight: 1.6 }}>
             <div style={{ fontWeight: 700, color: 'var(--text2)', marginBottom: 4 }}>"Measure twice, cut once."</div>
-            <div>Built with Node.js, React, SQLite · Self-hosted for TrueNAS SCALE</div>
+        <div>Built with Node.js, React, SQLite · Self-hosted for Docker</div>
           </div>
         </div>
       )}

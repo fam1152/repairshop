@@ -22,7 +22,7 @@
 ## Build Instructions
 
 ### Building the Docker Image
-RepairShop is optimized for Docker environments like TrueNAS SCALE.
+RepairShop is optimized for Docker environments.
 
 **Execution:**
 ```bash

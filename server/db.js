@@ -359,11 +359,11 @@ if (existingLog.c === 0) {
     { version: 'v8.0', date: '2026-04-13', type: 'feature', changes: 'Added AI assistant powered by Ollama — repair diagnosis, note formatter, customer messages, inventory reorder, business insights' },
     { version: 'v7.0', date: '2026-04-12', type: 'feature', changes: 'Added Docker update checker — check and apply updates from inside the app. Added container info and uptime display' },
     { version: 'v6.0', date: '2026-04-11', type: 'feature', changes: 'Added staff account management, activity log (30-day rolling), user avatars, appointment created-by tracking, scheduled backups, software license' },
-    { version: 'v5.0', date: '2026-04-10', type: 'feature', changes: 'Added backup and restore — download full backup zip, drag-and-drop restore, TrueNAS ZFS snapshot guidance' },
+    { version: 'v5.0', date: '2026-04-10', type: 'feature', changes: 'Added backup and restore — download full backup zip, drag-and-drop restore, ZFS snapshot guidance' },
     { version: 'v4.0', date: '2026-04-09', type: 'feature', changes: 'Added estimates/quotes with PDF, photo documentation per repair, appointment booking with Google Calendar sync' },
     { version: 'v3.0', date: '2026-04-08', type: 'feature', changes: 'Added barcode/QR scanner, QR code and barcode label generation, device serial number scanning, printable label sheets' },
     { version: 'v2.0', date: '2026-04-07', type: 'feature', changes: 'Added inventory tracking with stock levels, low stock alerts, transaction history, printable repair intake form PDF' },
-    { version: 'v1.0', date: '2026-04-06', type: 'release', changes: 'Initial release — customer management, repair tickets, invoicing, reminders, dashboard, dark mode, TrueNAS Docker deployment' },
+    { version: 'v1.0', date: '2026-04-06', type: 'release', changes: 'Initial release — customer management, repair tickets, invoicing, reminders, dashboard, dark mode, Docker deployment' },
   ];
   const stmt = db.prepare('INSERT INTO changelog (id,version,date,type,changes) VALUES (?,?,?,?,?)');
   logs.forEach(l => stmt.run(uuidv4(), l.version, l.date, l.type, l.changes));

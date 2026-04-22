@@ -222,7 +222,7 @@ function DockerComposeEditor() {
         <button className="btn btn-primary" onClick={save} disabled={saving}>
           {saved ? '✓ Saved!' : saving ? 'Saving…' : 'Save docker-compose.yml'}
         </button>
-        <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center' }}>Run <code>docker compose up -d</code> on TrueNAS to apply changes.</div>
+        <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center' }}>Run <code>docker compose up -d</code> on your host to apply changes.</div>
       </div>
     </div>
   );

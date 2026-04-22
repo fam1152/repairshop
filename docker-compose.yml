@@ -7,7 +7,7 @@ services:
       - "3000:3000"
       - "3443:3443"
     volumes:
-      - /mnt/tank/repairshop-data:/data
+      - ./repairshop-data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - PORT=3000
