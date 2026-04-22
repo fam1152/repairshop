@@ -9,9 +9,6 @@ services:
     volumes:
       - /mnt/tank/repairshop-data:/data
       - /var/run/docker.sock:/var/run/docker.sock
-      - .:/app
-      - /app/node_modules
-      - /app/client/node_modules
     environment:
       - PORT=3000
       - NODE_ENV=production
