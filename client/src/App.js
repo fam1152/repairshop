@@ -1,8 +1,36 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import { SettingsProvider } from './context/SettingsContext';
+import { SettingsProvider, useSettings } from './context/SettingsContext';
 import { AIProvider } from './context/AIContext';
 import Login from './pages/Login';
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error('[React Error Boundary]', error, errorInfo);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ padding: 40, background: '#fff', color: '#000', height: '100vh' }}>
+          <h1 style={{ color: '#dc2626' }}>Application Crash</h1>
+          <p>A runtime error occurred in the browser.</p>
+          <pre style={{ background: '#f8fafc', padding: 20, borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13, overflow: 'auto' }}>
+            {this.state.error?.stack || this.state.error?.toString()}
+          </pre>
+          <button className="btn btn-primary" onClick={() => { localStorage.clear(); window.location.reload(); }}>Clear Cache & Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 import Dashboard from './pages/Dashboard';
 import Customers from './pages/Customers';
 import Repairs from './pages/Repairs';
@@ -22,6 +50,7 @@ import Chat from './pages/Chat';
 import Estimates from './pages/Estimates';
 import Appointments from './pages/Appointments';
 import Settings from './pages/Settings';
+import Operations from './pages/Operations';
 import axios from 'axios';
 
 const NAV = [
@@ -40,6 +69,7 @@ const NAV = [
   { id: 'pricebook', label: 'Price Book', icon: <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" strokeWidth="2" strokeLinecap="round"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" strokeWidth="2"/></svg> },
   { id: 'workflows', label: 'Workflows', icon: <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><polyline points="13 17 18 12 13 7" strokeWidth="2" strokeLinecap="round"/><polyline points="6 17 11 12 6 7" strokeWidth="2" strokeLinecap="round"/></svg> },
   { id: 'trash', label: 'Trash', icon: <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6" strokeWidth="2" strokeLinecap="round"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" strokeWidth="2" strokeLinecap="round"/></svg> },
+  { id: 'ops', label: 'Operations', icon: <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" strokeWidth="2"/><path d="M3 2v7h7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M21 22v-7h-7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/><path d="M21 22a9 9 0 0 1-15.66-6.66L3 9" strokeWidth="2" strokeLinecap="round"/><path d="M3 2a9 9 0 0 1 15.66 6.66L21 15" strokeWidth="2" strokeLinecap="round"/></svg> },
   { id: 'settings', label: 'Settings', icon: <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" strokeWidth="2"/><path d="M12 2v2M12 20v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M2 12h2M20 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42" strokeWidth="2" strokeLinecap="round"/></svg> },
 ];
 
@@ -83,15 +113,21 @@ function UpdateBadge() {
 
 function Shell() {
   const { user, logout, loading } = useAuth();
+  const { darkMode } = useSettings();
   const [page, setPage] = useState('dashboard');
   const [pageState, setPageState] = useState({});
+
+  useEffect(() => {
+    const theme = darkMode === 1 || darkMode === true ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [darkMode]);
 
   const navigate = (p, state = {}) => {
     setPage(p);
     setPageState(state);
   };
 
-  if (loading) return null;
+  if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)', color: 'var(--text2)' }}>Loading RepairShop...</div>;
   if (!user) return <Login />;
   // Kiosk accounts get the public display dashboard
   if (user.is_kiosk) return <KioskDashboard onNavigate={navigate} />;
@@ -112,7 +148,8 @@ function Shell() {
     appointments: <Appointments key={JSON.stringify(pageState)} initialState={pageState} onNavigate={navigate} />,
     inventory: <Inventory onNavigate={navigate} />,
     scanner: <Scanner onNavigate={navigate} />,
-    settings: <Settings />,
+    ops: <Operations />,
+    settings: <Settings onNavigate={navigate} />,
   };
 
   return (
@@ -156,12 +193,14 @@ function Shell() {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <SettingsProvider>
-        <AIProvider>
-          <Shell />
-        </AIProvider>
-      </SettingsProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <SettingsProvider>
+          <AIProvider>
+            <Shell />
+          </AIProvider>
+        </SettingsProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }

@@ -1,17 +1,22 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 
+// Set global timeout for all requests to prevent white screen hangs
+axios.defaults.timeout = 10000;
+
 const SettingsContext = createContext(null);
 
 export function SettingsProvider({ children }) {
   const [settings, setSettings] = useState({});
   const [userPrefs, setUserPrefs] = useState(null);
 
-  const applyTheme = (darkMode) => {
+  const applyTheme = useCallback((darkMode) => {
     const isDark = darkMode === 1 || darkMode === true;
-    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
-    localStorage.setItem('repairshop:theme', isDark ? 'dark' : 'light');
-  };
+    const theme = isDark ? 'dark' : 'light';
+    console.log('[Theme] Applying:', theme);
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('repairshop:theme', theme);
+  }, []);
 
   // Immediate theme application from local cache on mount
   useEffect(() => {
@@ -28,30 +33,32 @@ export function SettingsProvider({ children }) {
   };
 
   const load = useCallback(async () => {
+    const token = localStorage.getItem('token');
+    if (!token) return;
+
     try {
-      const token = localStorage.getItem('token');
-      if (!token) return;
+      console.log('[Settings] Loading global and user preferences...');
       const [globalRes, prefsRes] = await Promise.allSettled([
         axios.get('/api/settings'),
         axios.get('/api/users/prefs'),
       ]);
-      const global = globalRes.status === 'fulfilled' ? globalRes.value.data : {};
-      setSettings(global);
-      applyScale(global.ui_scale);
+
+      if (globalRes.status === 'fulfilled' && globalRes.value.data) {
+        setSettings(globalRes.value.data);
+        applyScale(globalRes.value.data.ui_scale);
+      }
       
-      if (prefsRes.status === 'fulfilled') {
+      if (prefsRes.status === 'fulfilled' && prefsRes.value.data) {
         const prefs = prefsRes.value.data;
         setUserPrefs(prefs);
         applyTheme(prefs.dark_mode);
-      } else {
-        // Only apply global theme if we don't have a local cache yet
-        const cached = localStorage.getItem('repairshop:theme');
-        if (!cached) {
-          applyTheme(global.dark_mode || 0);
-        }
+      } else if (globalRes.status === 'fulfilled' && globalRes.value.data) {
+        applyTheme(globalRes.value.data.dark_mode || 0);
       }
-    } catch(e) {}
-  }, []);
+    } catch(e) {
+      console.error('[Settings] Load failed:', e.message);
+    }
+  }, [applyTheme]); // Removed all potentially changing dependencies
 
   useEffect(() => { load(); }, [load]);
 
