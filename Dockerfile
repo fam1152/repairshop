@@ -2,6 +2,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
+# Install dependencies and sudo
+RUN apk add --no-cache sudo
+
 # Install dependencies
 COPY package*.json ./
 RUN npm install --production

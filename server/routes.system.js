@@ -185,7 +185,7 @@ router.get('/docker-compose', isAdmin, (req, res) => {
 
 // Save docker-compose.yml
 router.post('/docker-compose', isAdmin, (req, res) => {
-  const { content, path: filePath } = req.body;
+  const { content, path: filePath, sudo_password } = req.body;
   if (!content) return res.status(400).json({ error: 'Content required' });
 
   // Always save to database
@@ -195,14 +195,52 @@ router.post('/docker-compose', isAdmin, (req, res) => {
   // Also write to filesystem if path exists
   if (filePath && filePath !== '(stored in database)' && fs.existsSync(path.dirname(filePath))) {
     try {
-      fs.writeFileSync(filePath, content, 'utf8');
-      return res.json({ ok: true, saved_to: filePath });
+      if (sudo_password) {
+        const { execSync } = require('child_process');
+        // Write to temp file then move with sudo
+        const tmpPath = `/tmp/docker-compose-RS.yml`;
+        fs.writeFileSync(tmpPath, content, 'utf8');
+        const cmd = `echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S mv ${tmpPath} ${filePath}`;
+        execSync(cmd);
+        return res.json({ ok: true, saved_to: filePath });
+      } else {
+        fs.writeFileSync(filePath, content, 'utf8');
+        return res.json({ ok: true, saved_to: filePath });
+      }
     } catch(e) {
+      if (e.message.includes('EACCES') || e.message.includes('permission denied')) {
+        return res.status(403).json({ error: 'Permission denied', needs_sudo: true });
+      }
       return res.json({ ok: true, saved_to: 'database only', warning: e.message });
     }
   }
 
   res.json({ ok: true, saved_to: 'database' });
+});
+
+// ── FIX FILE PERMISSIONS ──
+router.post('/fix-permissions', isAdmin, (req, res) => {
+  const { sudo_password } = req.body;
+  if (!sudo_password) return res.status(400).json({ error: 'sudo password required', needs_password: true });
+
+  const { exec } = require('child_process');
+  const dataDir = path.resolve(__dirname, '../data');
+  const composePath = path.resolve(__dirname, '../../docker-compose.yml');
+  
+  addLog('warn', `[System] Fixing file permissions in ${dataDir} initiated by ${req.user.username}`);
+  
+  // Attempt to chown the data dir and compose file to current user
+  const cmd = `echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S chown -R $(id -u):$(id -g) ${dataDir} && echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S chmod -R 755 ${dataDir} ${fs.existsSync(composePath) ? `&& echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S chown $(id -u):$(id -g) ${composePath}` : ''}`;
+
+  exec(cmd, (err, stdout, stderr) => {
+    if (err) {
+      addLog('error', `[System] Fix permissions failed: ${err.message}`);
+      res.status(500).json({ error: 'Failed to fix permissions', details: stderr });
+    } else {
+      addLog('info', '[System] File permissions fixed successfully');
+      res.json({ ok: true, message: 'Permissions updated' });
+    }
+  });
 });
 
 

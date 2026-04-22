@@ -198,14 +198,21 @@ function DockerComposeEditor() {
     }).catch(() => setLoading(false));
   }, []);
 
-  const save = async () => {
+  const save = async (sudoPass = null) => {
     setSaving(true);
     try {
-      const r = await axios.post('/api/system/docker-compose', { content, path: filePath });
+      const r = await axios.post('/api/system/docker-compose', { content, path: filePath, sudo_password: sudoPass });
       setFilePath(r.data.saved_to || filePath);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch(e) { alert(e.response?.data?.error || 'Error saving'); }
+    } catch(e) {
+      if (e.response?.data?.needs_sudo) {
+        const pass = window.prompt('Permission denied. Please enter your sudo password to save to ' + filePath);
+        if (pass) return save(pass);
+      } else {
+        alert(e.response?.data?.error || 'Error saving');
+      }
+    }
     setSaving(false);
   };
 
@@ -244,6 +251,23 @@ export default function Troubleshooting() {
         <div>
           <SystemInfo />
           <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 16 }}>Refreshes every 5 seconds</div>
+          
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 14 }}>🔑 File Permissions</div>
+            <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 12, lineHeight: 1.6 }}>
+              If you cannot save your logo or docker-compose.yml due to "Permission Denied", use this tool to grant the application ownership of its data folder.
+            </p>
+            <button className="btn btn-warning" onClick={async () => {
+              const pass = window.prompt('Enter sudo password to fix file permissions:');
+              if (pass) {
+                try {
+                  await axios.post('/api/system/fix-permissions', { sudo_password: pass });
+                  alert('Permissions fixed ✓');
+                } catch(e) { alert(err.response?.data?.error || 'Failed'); }
+              }
+            }}>🛠️ Fix File Permissions</button>
+          </div>
+
           <DBOptimize />
         </div>
       )}
