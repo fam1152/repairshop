@@ -197,7 +197,7 @@ export default function UpdateChecker() {
               <div style={{ marginTop: 10, padding: '10px', background: 'var(--bg1)', borderRadius: 6, border: '1px solid var(--border)' }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Latest GitHub Release: {checkResult.github.version}</div>
                 <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>Published {new Date(checkResult.github.published_at).toLocaleDateString()}</div>
-                <a href={checkResult.github.url} target="_blank" rel="noreferrer" className="btn btn-sm btn-primary" style={{ display: 'inline-block', textDecoration: 'none' }}>View Release & RPMs</a>
+                <a href={checkResult.github.url} target="_blank" rel="noreferrer" className="btn btn-sm btn-primary" style={{ display: 'inline-block', textDecoration: 'none' }}>View Release on GitHub</a>
               </div>
             )}
 
@@ -325,11 +325,23 @@ function Changelog() {
   // Full hardcoded changelog — always accurate regardless of DB
   const CHANGELOG = [
     {
+      version: 'v11.1.0', date: '2026-04-22', type: 'release',
+      changes: [
+        'Added custom Ollama API URL override in Settings → AI (connect to external PCs)',
+        'Improved Ollama auto-discovery with intelligent subnet scanning',
+        'Fixed "White Screen" on startup by adding API request timeouts and loading states',
+        'Added React Error Boundary to display crash details instead of a blank screen',
+        'Fixed critical "Server security misconfiguration" error with automatic JWT_SECRET generation',
+        'Enhanced User Profile management: set theme preferences (Dark/Light) for other accounts',
+        'Fixed theme persistence bug where Dark Mode would revert to Light on some accounts',
+        'Consolidated AI logic and removed conflicting routes for better stability',
+      ]
+    },
+    {
       version: 'v10.1.2', date: '2026-04-19', type: 'fix',
       changes: [
-        'Fixed RPM installation scriptlet errors that caused post-install failures',
         'Fixed SyntaxError (duplicate db declaration) in main server file',
-        'Improved version synchronization across all build artifacts (Docker/RPM)',
+        'Improved version synchronization across all build artifacts',
       ]
     },
     {
@@ -342,7 +354,7 @@ function Changelog() {
       version: 'v10.1.0', date: '2026-04-19', type: 'feature',
       changes: [
         'Multi-mode update system: automated Git Pull & Rebuild for source installs',
-        'Enhanced RPM support: update instructions and GitHub release links in UI',
+        'Enhanced update instructions and GitHub release links in UI',
         'Database Fix: Added missing manufacturer and device_type columns to inventory',
         'Improved update detection for local builds (Status Unknown handling)',
         'Cleanup of build artifacts and incorrectly named shell expansion directories',
@@ -374,7 +386,6 @@ function Changelog() {
         'Trash / Recycle Bin page — restore deleted repairs, customers, invoices, estimates',
         'Per-user dark mode fixed — loads and saves correctly for all accounts',
         'Staff accounts have full access to all features except user management',
-        'RPM packaging — build-rpm.sh creates installable Fedora .rpm package',
         'Version bumped to v10.0',
       ]
     },
@@ -517,7 +528,7 @@ function Changelog() {
     },
   ];
 
-  const [expanded, setExpanded] = useState('v9.0');
+  const [expanded, setExpanded] = useState('v11.1.0');
 
   return (
     <div className="card" style={{ marginTop: 16 }}>

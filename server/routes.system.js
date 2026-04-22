@@ -31,7 +31,7 @@ console.warn = (...args) => { origWarn(...args); addLog('warn', args.join(' '));
 console.error = (...args) => { origError(...args); addLog('error', args.join(' ')); };
 
 // Add startup log
-addLog('info', `[System] RepairShop v11.0.0 started at ${new Date().toISOString()}`);
+addLog('info', `[System] RepairShop v1.0.0-Beta-Build-04-20-2026 started at ${new Date().toISOString()}`);
 addLog('info', `[System] Node.js ${process.version} | PID ${process.pid}`);
 
 // Get live logs
@@ -226,8 +226,74 @@ router.post('/db-optimize', isAdmin, (req, res) => {
   }
 });
 
+// File Browser API
+router.get('/files', isAdmin, (req, res) => {
+  const dataDir = path.join(__dirname, '../data');
+  const subDir = req.query.path || '';
+  const targetDir = path.resolve(dataDir, subDir);
+
+  // Security: Prevent directory traversal
+  if (!targetDir.startsWith(path.resolve(dataDir))) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  if (!fs.existsSync(targetDir)) {
+    return res.status(404).json({ error: 'Directory not found' });
+  }
+
+  try {
+    const entries = fs.readdirSync(targetDir).map(name => {
+      const stats = fs.statSync(path.join(targetDir, name));
+      return {
+        name,
+        is_directory: stats.isDirectory(),
+        size: stats.size,
+        modified_at: stats.mtime,
+        path: path.join(subDir, name)
+      };
+    });
+    res.json({ current_path: subDir, entries });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.get('/files/view', isAdmin, (req, res) => {
+  const dataDir = path.join(__dirname, '../data');
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: 'Path required' });
+  const targetPath = path.resolve(dataDir, filePath);
+
+  if (!targetPath.startsWith(path.resolve(dataDir))) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  if (!fs.existsSync(targetPath)) return res.status(404).json({ error: 'File not found' });
+  
+  const ext = path.extname(targetPath).toLowerCase();
+  const binaryTypes = ['.sqlite', '.zip', '.exe', '.dll'];
+  if (binaryTypes.includes(ext)) {
+    return res.status(400).json({ error: 'Cannot view binary file. Use download instead.' });
+  }
+
+  res.sendFile(targetPath);
+});
+
+router.get('/files/download', isAdmin, (req, res) => {
+  const dataDir = path.join(__dirname, '../data');
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: 'Path required' });
+  const targetPath = path.resolve(dataDir, filePath);
+
+  if (!targetPath.startsWith(path.resolve(dataDir))) {
+    return res.status(403).json({ error: 'Access denied' });
+  }
+
+  if (!fs.existsSync(targetPath)) return res.status(404).json({ error: 'File not found' });
+  res.download(targetPath);
+});
+
 module.exports = router;
-module.exports.addLog = addLog;
 module.exports.addLog = addLog;
 
 // ── FORCED DOCKER UPDATE ──

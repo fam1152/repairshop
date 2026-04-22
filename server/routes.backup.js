@@ -35,6 +35,8 @@ router.get('/download', async (req, res) => {
         archive.file(dbPath, { name: 'repairshop.sqlite' });
       }
       if (fs.existsSync(uploadsPath)) archive.directory(uploadsPath, 'uploads');
+      const printQueuePath = process.env.PRINT_QUEUE_PATH || path.join(__dirname, '../data/print-queue');
+      if (fs.existsSync(printQueuePath)) archive.directory(printQueuePath, 'print-queue');
       
       await archive.finalize();
       return res.json({ ok: true, message: `Backup saved to ${fullPath}`, filename: fullPath });
@@ -67,12 +69,19 @@ router.get('/download', async (req, res) => {
     archive.directory(uploadsPath, 'uploads');
   }
 
+  // Add print queue directory
+  const printQueuePath = process.env.PRINT_QUEUE_PATH || path.join(__dirname, '../data/print-queue');
+  if (fs.existsSync(printQueuePath)) {
+    archive.directory(printQueuePath, 'print-queue');
+  }
+
   // Add a metadata file
   const meta = {
     version: 4,
     created_at: new Date().toISOString(),
     db_path: dbPath,
     uploads_path: uploadsPath,
+    print_queue_path: printQueuePath,
     tables: db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(r => r.name),
   };
   archive.append(JSON.stringify(meta, null, 2), { name: 'backup-meta.json' });
@@ -152,9 +161,9 @@ router.post('/restore', restoreUpload.single('backup'), async (req, res) => {
     const dbEntry = zip.getEntry('repairshop.sqlite');
     fs.writeFileSync(dbPath, dbEntry.getData());
 
-    // Extract uploads if present
-    const uploadEntries = entries.filter(e => e.startsWith('uploads/') && !e.endsWith('/'));
-    for (const entry of uploadEntries) {
+    // Extract uploads and print-queue if present
+    const dataEntries = entries.filter(e => (e.startsWith('uploads/') || e.startsWith('print-queue/')) && !e.endsWith('/'));
+    for (const entry of dataEntries) {
       const zipEntry = zip.getEntry(entry);
       if (!zipEntry) continue;
       const destPath = path.join(dataDir, entry);
@@ -175,7 +184,7 @@ router.post('/restore', restoreUpload.single('backup'), async (req, res) => {
       ok: true,
       message: 'Restore successful. Please refresh the page.',
       meta,
-      files_restored: uploadEntries.length,
+      files_restored: dataEntries.length,
     });
 
   } catch (err) {
@@ -185,8 +194,6 @@ router.post('/restore', restoreUpload.single('backup'), async (req, res) => {
     res.status(500).json({ error: `Restore failed: ${err.message}` });
   }
 });
-
-module.exports = router;
 
 // ── SCHEDULED BACKUP SETTINGS ──
 router.get('/schedule', (req, res) => {
@@ -260,3 +267,24 @@ router.post('/drive', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+// ── RESTART / RELOAD ──
+router.post('/restart', (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  
+  res.json({ ok: true, message: 'System is restarting...' });
+  
+  console.log('[System] Manual restart/reload triggered by', req.user.username);
+  
+  // Wait a bit to let the response finish
+  setTimeout(() => {
+    try {
+      db.close();
+      process.exit(0); // systemd or docker will restart it
+    } catch(e) {
+      process.exit(1);
+    }
+  }, 1000);
+});
+
+module.exports = router;

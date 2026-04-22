@@ -32,6 +32,20 @@ export default function BackupRestore() {
   const [manualPath, setManualPath] = useState('');
   const [manualSaving, setManualSaving] = useState(false);
   const [manualResult, setManualResult] = useState('');
+  const [reloading, setReloading] = useState(false);
+
+  const reloadDatabase = async () => {
+    if (!window.confirm('This will disconnect all users and restart the background server process to reload the database. Continue?')) return;
+    setReloading(true);
+    try {
+      await axios.post('/api/backup/restart');
+      alert('System restart command sent. The page will refresh automatically in 10 seconds.');
+      setTimeout(() => window.location.reload(), 10000);
+    } catch(e) {
+      alert('Failed to send restart command: ' + (e.response?.data?.error || e.message));
+      setReloading(false);
+    }
+  };
 
   const downloadBackup = async () => {
     setDownloading(true);
@@ -120,6 +134,17 @@ export default function BackupRestore() {
 
   return (
     <div>
+      {/* System Actions */}
+      <div className="card" style={{ marginBottom: 16, border: '1px solid var(--warning)', background: 'var(--warning-light)' }}>
+        <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 14, color: 'var(--warning)' }}>⚠️ System Actions</div>
+        <p style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 14 }}>
+          If you have just updated the software or restored a database manually, use this button to refresh the background connection.
+        </p>
+        <button className="btn btn-sm btn-warning" onClick={reloadDatabase} disabled={reloading}>
+          {reloading ? '🔄 Restarting…' : '🔄 Reload Database & Refresh System'}
+        </button>
+      </div>
+
       {/* Database info */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ fontWeight: 700, marginBottom: 14, fontSize: 14 }}>💾 Current data</div>

@@ -627,23 +627,7 @@ Format the output in clean Markdown.`;
   return response;
 }
 
-// ── PREFS & TRAINING ──
-router.get('/prefs', (req, res) => {
-  try {
-    let prefs = db.prepare('SELECT * FROM user_preferences WHERE user_id=?').get(req.user.id);
-    if (!prefs) return res.json({ user_id: req.user.id, dark_mode: 0, preferences: {} });
-    res.json({ ...prefs, preferences: JSON.parse(prefs.preferences || '{}') });
-  } catch(e) { res.json({ user_id: req.user.id, dark_mode: 0, preferences: {} }); }
-});
-
-router.put('/prefs', (req, res) => {
-  const { dark_mode, preferences } = req.body;
-  const existing = db.prepare('SELECT id FROM user_preferences WHERE user_id=?').get(req.user.id);
-  if (existing) db.prepare('UPDATE user_preferences SET dark_mode=?, preferences=? WHERE user_id=?').run(dark_mode?1:0, JSON.stringify(preferences || {}), req.user.id);
-  else db.prepare('INSERT INTO user_preferences (id, user_id, dark_mode, preferences) VALUES (?,?,?,?)').run(require('uuid').v4(), req.user.id, dark_mode?1:0, JSON.stringify(preferences || {}));
-  res.json({ ok: true });
-});
-
+// ── TRAINING ──
 router.get('/training', (req, res) => {
   const trainPath = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'ai-training.json');
   if (require('fs').existsSync(trainPath)) return res.json(JSON.parse(require('fs').readFileSync(trainPath, 'utf8')));

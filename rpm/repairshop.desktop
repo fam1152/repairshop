@@ -1,9 +1,0 @@
-[Desktop Entry]
-Name=RepairShop
-Comment=Manage RepairShop Server
-Exec=/usr/bin/repairshop-launcher.sh
-Icon=repairshop
-Terminal=false
-Type=Application
-Categories=Office;Business;
-Keywords=repair;shop;it;inventory;invoicing;

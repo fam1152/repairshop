@@ -88,11 +88,6 @@ function isDockerAvailable() {
   } catch(e) { return false; }
 }
 
-// Check if running as RPM
-function isRpmInstall() {
-  return process.cwd().startsWith('/opt/repairshop') || fs.existsSync('/etc/repairshop/repairshop.conf');
-}
-
 // ── GET LATEST FROM GITHUB ──
 router.get('/github-latest', async (req, res) => {
   try {
@@ -118,18 +113,14 @@ router.get('/github-latest', async (req, res) => {
 router.get('/check', async (req, res) => {
   const image = getImageName();
   const dockerAvailable = isDockerAvailable();
-  const rpmInstall = isRpmInstall();
 
   if (!dockerAvailable) {
     // If not docker, we can still check GitHub
     return res.json({
       available: false,
       docker_socket: false,
-      is_rpm: rpmInstall,
       image,
-      message: rpmInstall 
-        ? 'Running as RPM package. Updates should be applied via: sudo dnf upgrade repairshop'
-        : 'Docker socket not mounted. Add the socket volume to docker-compose.yml to enable automatic updates.'
+      message: 'Docker socket not mounted. Add the socket volume to docker-compose.yml to enable automatic updates.'
     });
   }
 

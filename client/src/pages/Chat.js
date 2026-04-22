@@ -12,6 +12,8 @@ export default function Chat() {
   const [sending, setSending] = useState(false);
   const [recipient, setRecipient] = useState('broadcast'); // 'broadcast' | 'ai' | user_id
   const [aiTyping, setAiTyping] = useState(false);
+  const [availableModels, setAvailableModels] = useState([]);
+  const [selectedModel, setSelectedModel] = useState('');
   const messagesEndRef = useRef(null);
   const lastFetch = useRef(null);
   const pollRef = useRef(null);
@@ -42,6 +44,10 @@ export default function Chat() {
   useEffect(() => {
     loadMessages();
     axios.get('/api/users').then(r => setUsers(r.data)).catch(() => {});
+    axios.get('/api/ai/model-updates').then(r => {
+      setAvailableModels(r.data.installed || []);
+      setSelectedModel(r.data.current_model || '');
+    }).catch(() => {});
 
     // Poll for new messages every 3 seconds
     pollRef.current = setInterval(() => {
@@ -62,7 +68,7 @@ export default function Chat() {
     try {
       if (recipient === 'ai') {
         setAiTyping(true);
-        const r = await axios.post('/api/chat/ai', { message: msg });
+        const r = await axios.post('/api/chat/ai', { message: msg, model: selectedModel });
         setMessages(prev => {
           const ids = new Set(prev.map(m => m.id));
           const toAdd = [r.data.userMessage, r.data.aiMessage].filter(m => m && !ids.has(m.id));
@@ -182,6 +188,21 @@ export default function Chat() {
 
           {/* Input */}
           <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg2)' }}>
+            {recipient === 'ai' && availableModels.length > 0 && (
+              <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--text3)', fontWeight: 600 }}>Model:</span>
+                <select 
+                  className="form-control form-control-xs" 
+                  style={{ width: 'auto', fontSize: 11, height: 24, padding: '0 8px' }}
+                  value={selectedModel}
+                  onChange={e => setSelectedModel(e.target.value)}
+                >
+                  {availableModels.map(m => (
+                    <option key={m.name} value={m.name}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 8, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 10, padding: '4px 4px 4px 12px' }}>
               <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKey}
                 placeholder={recipient === 'ai' ? 'Ask RepairBot anything…' : 'Type a message… (Enter to send)'}

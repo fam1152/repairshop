@@ -104,17 +104,27 @@ function CreateUserForm({ onSave, onClose }) {
 }
 
 function EditUserForm({ user, isMe, onSave, onClose }) {
-  const [form, setForm] = useState({ display_name: user.display_name || '', active: !!user.active });
+  const [form, setForm] = useState({ display_name: user.display_name || '', active: !!user.active, dark_mode: 0 });
   const [avatarFile, setAvatarFile] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState(user.avatar_url || null);
   const [saving, setSaving] = useState(false);
   const fileRef = useRef(null);
+
+  useEffect(() => {
+    // Fetch target user preferences
+    axios.get(`/api/users/${user.id}/prefs`).then(r => {
+      setForm(f => ({ ...f, dark_mode: r.data.dark_mode || 0 }));
+    }).catch(() => {});
+  }, [user.id]);
 
   const submit = async e => {
     e.preventDefault();
     setSaving(true);
     try {
       await axios.put(`/api/users/${user.id}`, form);
+      // Save prefs for this user
+      await axios.put(`/api/users/${user.id}/prefs`, { dark_mode: form.dark_mode, preferences: {} });
+      
       if (avatarFile) {
         const fd = new FormData();
         fd.append('avatar', avatarFile);
@@ -144,6 +154,16 @@ function EditUserForm({ user, isMe, onSave, onClose }) {
         </div>
       </div>
       <div className="form-group"><label>Display name</label><input className="form-control" value={form.display_name} onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))} autoFocus /></div>
+      
+      <div className="form-group">
+        <label>Theme Preference</label>
+        <select className="form-control" value={form.dark_mode} onChange={e => setForm(f => ({ ...f, dark_mode: parseInt(e.target.value) }))}>
+          <option value={0}>Light Mode</option>
+          <option value={1}>Dark Mode</option>
+        </select>
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Used on the kiosk and technician dashboard.</div>
+      </div>
+
       {!isMe && (
         <div className="form-group">
           <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>

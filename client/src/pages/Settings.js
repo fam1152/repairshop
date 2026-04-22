@@ -139,7 +139,7 @@ function ManufacturersTab() {
   );
 }
 
-export default function Settings() {
+export default function Settings({ onNavigate }) {
   const { settings, update, toggleDarkMode, darkMode: effectiveDarkMode, reload } = useSettings();
   const { user } = useAuth();
   const [form, setForm] = useState(null);
@@ -147,7 +147,7 @@ export default function Settings() {
   const [saved, setSaved] = useState(false);
   const [logoFile, setLogoFile] = useState(null);
   const [logoPreview, setLogoPreview] = useState(null);
-  const [tab, setTab] = useState('company');
+  const [tab, setTab] = useState('shop');
   const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' });
   const [pwMsg, setPwMsg] = useState('');
 
@@ -157,7 +157,7 @@ export default function Settings() {
   const setCheck = k => e => setForm(f => ({ ...f, [k]: e.target.checked ? 1 : 0 }));
 
   const save = async e => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     setSaving(true);
     try {
       const payload = { ...form };
@@ -188,138 +188,52 @@ export default function Settings() {
 
   if (!form) return null;
 
+  const TABS = [
+    { id: 'shop', label: '🏪 Shop', desc: 'Company info, branding & manufacturers' },
+    { id: 'profile', label: '👤 User Profile', desc: 'Account security & personal display' },
+    { id: 'ops', label: '⚙️ Operations', desc: 'Print queue & file browser' },
+    { id: 'intel', label: '🤖 Intelligence', desc: 'AI assistant & cloud sync' },
+    { id: 'system', label: '🖥️ System', desc: 'Backups, updates & troubleshooting' },
+    { id: 'about', label: '📄 About', desc: 'License & version info' },
+  ];
+
   return (
     <div className="page">
-      <div className="page-header"><h1>Settings</h1></div>
+      <div className="page-header">
+        <div>
+          <h1>Settings</h1>
+          <div style={{ fontSize: 13, color: 'var(--text3)', marginTop: 4 }}>V1.0.0-Beta-Build-04-20-2026</div>
+        </div>
+        {saved && <div style={{ color: 'var(--success)', fontWeight: 700, animation: 'fade 2s forwards' }}>✓ Settings Saved</div>}
+      </div>
 
       <div className="tabs">
-        {['company', 'display', 'invoice', 'account', 'backup', 'updates', 'ai', 'troubleshooting', 'cloud', 'manufacturers', 'license'].map(t => (
-          <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-            {t === 'backup' ? '💾 Backup & Restore' : t === 'license' ? '📄 License' : t === 'updates' ? '🔄 Updates' : t === 'ai' ? '🤖 AI' : t === 'troubleshooting' ? '🔧 Troubleshooting' : t === 'display' ? '🖥️ Display' : t === 'cloud' ? '☁️ Cloud' : t === 'manufacturers' ? '🏭 Manufacturers' : t.charAt(0).toUpperCase() + t.slice(1)}
+        {TABS.map(t => (
+          <button key={t.id} className={`tab ${tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)} title={t.desc}>
+            {t.label}
           </button>
         ))}
       </div>
 
-      {tab === 'display' && (
+      {tab === 'shop' && (
         <form onSubmit={save}>
           <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 16 }}>Theme</div>
-            <div className="form-group">
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', marginBottom: 12 }}>
-                <input type="checkbox" checked={!!form.dark_mode} onChange={e => { setCheck('dark_mode')(e); }} style={{ width: 18, height: 18 }} />
-                <div>
-                  <div style={{ fontWeight: 600 }}>Dark mode</div>
-                  <div style={{ fontSize: 12, color: 'var(--text3)' }}>Applies to your account only — each user has their own preference</div>
-                </div>
-              </label>
-            </div>
-            <div style={{ display: 'flex', gap: 12 }}>
-              <div onClick={() => { setForm(f => ({ ...f, dark_mode: 0 })); toggleDarkMode(0); }} style={{ flex: 1, padding: '16px', borderRadius: 8, border: `2px solid ${!form.dark_mode ? 'var(--accent)' : 'var(--border)'}`, cursor: 'pointer', background: '#f8fafc', textAlign: 'center' }}>
-                <div style={{ fontSize: 24, marginBottom: 6 }}>☀️</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#0f172a' }}>Light</div>
-              </div>
-              <div onClick={() => { setForm(f => ({ ...f, dark_mode: 1 })); toggleDarkMode(1); }} style={{ flex: 1, padding: '16px', borderRadius: 8, border: `2px solid ${form.dark_mode ? 'var(--accent)' : 'var(--border)'}`, cursor: 'pointer', background: '#0f172a', textAlign: 'center' }}>
-                <div style={{ fontSize: 24, marginBottom: 6 }}>🌙</div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: '#f1f5f9' }}>Dark</div>
-              </div>
-            </div>
-          </div>
-
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 16 }}>Currency</div>
-            <div className="form-group" style={{ marginBottom: 0 }}>
-              <label>Display currency</label>
-              <select className="form-control" value={form.currency || 'USD'} onChange={set('currency')}>
-                {['USD','CAD','GBP','EUR','AUD','NZD'].map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-          </div>
-
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 16 }}>Screen Scaling & Accessibility</div>
-            <div className="form-group">
-              <label>UI & Font Scale: <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{form.ui_scale || '1.0'}x</span></label>
-              <input type="range" min="0.8" max="2.0" step="0.1" className="form-control" value={form.ui_scale || '1.0'} onChange={set('ui_scale')} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                <span>Small (0.8x)</span>
-                <span>Normal (1.0x)</span>
-                <span>Large Monitor (1.4x)</span>
-                <span>TV / Presentation (2.0x)</span>
-              </div>
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--text2)', background: 'var(--bg3)', padding: 10, borderRadius: 6, lineHeight: 1.5 }}>
-              💡 Icons and text will scale together automatically. Use a higher scale for large screens like TVs or wall-mounted monitors.
-            </div>
-          </div>
-
-          <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saved ? '✓ Saved!' : saving ? 'Saving…' : 'Save display settings'}
-          </button>
-        </form>
-      )}
-
-      {tab === 'company' && (
-        <form onSubmit={save}>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 16 }}>Company information</div>
+            <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 16 }}>Company Information</div>
             <div className="grid-2">
               <div className="form-group"><label>Company name</label><input className="form-control" value={form.company_name || ''} onChange={set('company_name')} /></div>
               <div className="form-group"><label>Phone</label><input className="form-control" value={form.phone || ''} onChange={set('phone')} /></div>
             </div>
             <div className="form-group"><label>Email</label><input className="form-control" type="email" value={form.email || ''} onChange={set('email')} /></div>
             <div className="form-group"><label>Address</label><textarea className="form-control" value={form.address || ''} onChange={set('address')} rows={2} /></div>
-          </div>
-
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 16 }}>Software Support & Feedback</div>
-            <div className="form-group">
-              <label>Feedback & Requests Email</label>
-              <input className="form-control" type="email" value={form.support_email || ''} onChange={set('support_email')} placeholder="e.g. feedback@yourdomain.com" />
-              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>This email will be displayed in the app for users to report issues.</div>
-            </div>
-            <div className="form-group">
-              <label>Donation Link (e.g. Buy Me A Coffee)</label>
-              <input className="form-control" value={form.donation_link || ''} onChange={set('donation_link')} placeholder="https://buymeacoffee.com/yourname" />
-              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Show your appreciation for the software development.</div>
-            </div>
-          </div>
-
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 16 }}>Email Service (External API)</div>
-            <div className="form-group">
-              <label>API Provider</label>
-              <select className="form-control" value={form.email_provider || 'resend'} onChange={set('email_provider')}>
-                <option value="resend">Resend (Recommended)</option>
-                <option value="sendgrid">SendGrid</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label>API Key</label>
-              <input className="form-control" type="password" value={form.email_api_key || ''} onChange={set('email_api_key')} placeholder="Paste your API key here" />
-            </div>
-            <div style={{ fontSize: 13, color: 'var(--text2)', background: 'var(--bg3)', padding: 10, borderRadius: 6 }}>
-              💡 This is used to send invoices and documents directly to customers. The "From" address will be the Company Email set above.
-            </div>
-          </div>
-
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 16 }}>Tax</div>
-            <div className="grid-2">
+            
+            <div className="grid-2" style={{ marginTop: 16 }}>
               <div className="form-group"><label>Tax label (e.g. "GST", "VAT")</label><input className="form-control" value={form.tax_label || ''} onChange={set('tax_label')} /></div>
               <div className="form-group"><label>Tax rate (%)</label><input className="form-control" type="number" step="0.01" min="0" max="100" value={form.tax_rate || 0} onChange={set('tax_rate')} /></div>
             </div>
           </div>
 
-          <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saved ? '✓ Saved!' : saving ? 'Saving…' : 'Save settings'}
-          </button>
-        </form>
-      )}
-
-      {tab === 'invoice' && (
-        <form onSubmit={save}>
           <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 16 }}>Invoice branding</div>
+            <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 16 }}>Invoice & Document Branding</div>
             <div className="form-group">
               <label>Accent color</label>
               <div className="flex">
@@ -329,7 +243,7 @@ export default function Settings() {
               </div>
             </div>
             <div className="form-group">
-              <label>Footer / thank-you note on invoices</label>
+              <label>Footer / thank-you note</label>
               <textarea className="form-control" value={form.invoice_notes || ''} onChange={set('invoice_notes')} rows={2} />
             </div>
             <div className="form-group">
@@ -340,103 +254,178 @@ export default function Settings() {
                 </div>
               )}
               <input type="file" accept="image/*" onChange={e => { const f = e.target.files[0]; if (f) { setLogoFile(f); setLogoPreview(URL.createObjectURL(f)); } }} className="form-control" />
-              <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 4 }}>PNG, JPG or SVG. Max 5MB.</div>
             </div>
           </div>
 
-          {user?.role === 'admin' ? (
-          <button type="submit" className="btn btn-primary" disabled={saving}>
-            {saved ? '✓ Saved!' : saving ? 'Saving…' : 'Save invoice settings'}
-          </button>
-        ) : (
-          <div style={{ fontSize: 13, color: 'var(--text3)', padding: '10px 0' }}>
-            ℹ️ Only admin accounts can edit invoice settings.
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 16 }}>Manufacturers & Device Types</div>
+            <ManufacturersTab />
           </div>
-        )}
+
+          <div style={{ position: 'sticky', bottom: 16, zIndex: 10 }}>
+            <button type="submit" className="btn btn-primary btn-lg w-full shadow" disabled={saving}>
+              {saving ? 'Saving…' : 'Save Shop Settings'}
+            </button>
+          </div>
         </form>
       )}
 
-      {tab === 'backup' && (
-        <BackupRestore />
+      {tab === 'profile' && (
+        <div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 16 }}>Display Preferences</div>
+            <div className="grid-2">
+              <div onClick={() => toggleDarkMode(0)} style={{ padding: '20px', borderRadius: 12, border: `2px solid ${!effectiveDarkMode ? 'var(--accent)' : 'var(--border)'}`, cursor: 'pointer', background: '#f8fafc', textAlign: 'center', transition: 'all 0.2s' }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>☀️</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#0f172a' }}>Light Mode</div>
+              </div>
+              <div onClick={() => toggleDarkMode(1)} style={{ padding: '20px', borderRadius: 12, border: `2px solid ${effectiveDarkMode ? 'var(--accent)' : 'var(--border)'}`, cursor: 'pointer', background: '#0f172a', textAlign: 'center', transition: 'all 0.2s' }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>🌙</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#f1f5f9' }}>Dark Mode</div>
+              </div>
+            </div>
+            
+            <div className="form-group" style={{ marginTop: 24 }}>
+              <label>UI & Font Scale: <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{form.ui_scale || '1.0'}x</span></label>
+              <input type="range" min="0.8" max="2.0" step="0.1" className="form-control" value={form.ui_scale || '1.0'} onChange={e => { set('ui_scale')(e); save(); }} />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                <span>Small</span>
+                <span>Normal</span>
+                <span>Large Monitor</span>
+                <span>TV / Kiosk</span>
+              </div>
+            </div>
+
+            <div className="form-group" style={{ marginTop: 20, marginBottom: 0 }}>
+              <label>Preferred Currency</label>
+              <select className="form-control" value={form.currency || 'USD'} onChange={e => { set('currency')(e); save(); }}>
+                {['USD','CAD','GBP','EUR','AUD','NZD'].map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="card">
+            <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 16 }}>Account Security</div>
+            <AccountManagement />
+          </div>
+        </div>
       )}
 
-      {tab === 'account' && (
-        <AccountManagement />
+      {tab === 'ops' && (
+        <div className="card" style={{ textAlign: 'center', padding: '40px 20px' }}>
+          <div style={{ fontSize: 48, marginBottom: 20 }}>⚙️</div>
+          <h2 style={{ marginBottom: 10 }}>Operations has moved</h2>
+          <p style={{ color: 'var(--text3)', marginBottom: 24, maxWidth: 400, margin: '0 auto 24px' }}>
+            The Print Queue and File Browser are now located in their own dedicated section in the main sidebar for easier access.
+          </p>
+          <button className="btn btn-primary btn-lg" onClick={() => onNavigate('ops')}>
+            Go to Operations →
+          </button>
+        </div>
       )}
 
-      {tab === 'ai' && (
-        <AISettings />
+      {tab === 'intel' && (
+        <div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 16 }}>AI Technician Assistant</div>
+            <AISettings />
+          </div>
+          <div className="card">
+            <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 16 }}>Cloud Synchronization</div>
+            <CloudSettings />
+          </div>
+        </div>
       )}
 
-      {tab === 'troubleshooting' && (
-        <Troubleshooting />
+      {tab === 'system' && (
+        <div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 16 }}>Backup & Restore</div>
+            <BackupRestore />
+          </div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 16 }}>Software Updates</div>
+            <UpdateChecker />
+          </div>
+          <div className="card">
+            <div style={{ fontWeight: 700, marginBottom: 16, fontSize: 16 }}>Troubleshooting & Diagnostics</div>
+            <Troubleshooting />
+          </div>
+        </div>
       )}
 
-      {tab === 'updates' && (
-        <UpdateChecker />
-      )}
+      {tab === 'about' && (
+        <div>
+          <div className="card" style={{ marginBottom: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+              <div style={{ width: 64, height: 64, background: 'var(--accent)', borderRadius: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 32 }}>🔧</div>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 24 }}>RepairShop</div>
+                <div style={{ fontSize: 14, color: 'var(--accent)', fontWeight: 700 }}>V1.0.0-Beta-Build-04-20-2026</div>
+                <div style={{ fontSize: 12, color: 'var(--text3)' }}>IT Repair Management & CRM Suite</div>
+              </div>
+            </div>
+            
+            <div style={{ background: 'var(--bg3)', padding: 16, borderRadius: 12, marginBottom: 20 }}>
+              <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 14 }}>Support & Feedback</div>
+              <div className="form-group">
+                <label>Feedback Email</label>
+                <div className="flex" style={{ gap: 8 }}>
+                  <input className="form-control" value={form.support_email || ''} onChange={set('support_email')} placeholder="e.g. support@yourshop.com" />
+                  <button className="btn btn-primary" onClick={() => save()}>Save</button>
+                </div>
+              </div>
+              <div style={{ marginTop: 20, textAlign: 'center', padding: '10px', borderTop: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12, color: 'var(--text2)' }}>
+                  If you like what i do, Buy me a cup of coffee, Helps keep me going!
+                </div>
+                <a 
+                  href="https://www.paypal.com/donate/?business=25L2SPLZ9J9U4&no_recurring=0&item_name=Helping+small+repair+shops+break+free+from+costly+CRM+and+IT+management+subscriptions.&currency_code=USD" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    gap: 8, 
+                    background: '#ffc439', 
+                    color: '#111', 
+                    padding: '8px 20px', 
+                    borderRadius: 20, 
+                    fontWeight: 700, 
+                    textDecoration: 'none',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                    transition: 'transform 0.1s'
+                  }}
+                  onMouseOver={e => e.currentTarget.style.transform = 'scale(1.02)'}
+                  onMouseOut={e => e.currentTarget.style.transform = 'scale(1)'}
+                >
+                  <span style={{ fontSize: 16 }}>💙</span> Donate with PayPal
+                </a>
+              </div>
+            </div>
 
+            <pre style={{ fontSize: 11, lineHeight: 1.6, color: 'var(--text2)', whiteSpace: 'pre-wrap', fontFamily: 'monospace', background: 'var(--bg2)', padding: 16, borderRadius: 8, overflow: 'auto', border: '1px solid var(--border)' }}>{`REPAIRSHOP — PROPRIETARY SOFTWARE LICENSE
+Copyright (c) 2026 fam1152. All rights reserved.`}</pre>
+          </div>
 
-      {tab === 'cloud' && (
-        <CloudSettings />
-      )}
-
-      {tab === 'manufacturers' && (
-        <ManufacturersTab />
-      )}
-
-      {tab === 'license' && (
-        <div className="card">
-          <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>RepairShop</div>
-          <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 16 }}>Proprietary Software — All rights reserved</div>
-          <pre style={{ fontSize: 12, lineHeight: 1.7, color: 'var(--text2)', whiteSpace: 'pre-wrap', fontFamily: 'monospace', background: 'var(--bg3)', padding: 16, borderRadius: 8, overflow: 'auto' }}>{`REPAIRSHOP — PROPRIETARY SOFTWARE LICENSE
-
-Copyright (c) 2026 fam1152
-All rights reserved.
-
-This software and its source code ("Software") are proprietary and confidential.
-
-RESTRICTIONS:
-1. You may not copy, reproduce, distribute, publish, or otherwise transfer
-   the Software or any portion of it to any third party without prior
-   written permission from the copyright holder.
-
-2. You may not modify, adapt, translate, reverse engineer, decompile,
-   disassemble, or create derivative works based on the Software.
-
-3. You may not sublicense, rent, lease, or lend the Software to any
-   third party.
-
-4. You may not use the Software for any purpose other than the internal
-   business operations of the licensed organization.
-
-PERMITTED USE:
-This Software is licensed for use solely by the organization that
-commissioned its development. Internal use, modification for internal
-purposes, and deployment on infrastructure owned or controlled by the
-licensed organization is permitted.
-
-DISCLAIMER:
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL
-THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY,
-WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF,
-OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.`}</pre>
-          <div style={{ marginTop: 16, fontSize: 12, color: 'var(--text3)' }}>
-            Built with Node.js, React, SQLite · Self-hosted on TrueNAS SCALE
+          <div style={{ textAlign: 'center', padding: 20, color: 'var(--text3)', fontSize: 12, lineHeight: 1.6 }}>
+            <div style={{ fontWeight: 700, color: 'var(--text2)', marginBottom: 4 }}>"Measure twice, cut once."</div>
+            <div>Built with Node.js, React, SQLite · Self-hosted for TrueNAS SCALE</div>
           </div>
         </div>
       )}
       
-      <div style={{ marginTop: 32, paddingTop: 16, borderTop: '1px solid var(--border)', textAlign: 'center', fontSize: 12, color: 'var(--text3)', lineHeight: 1.6 }}>
-        <div>this software is provided as is and with no warrenty</div>
-        <div style={{ maxWidth: 600, margin: '8px auto 0', fontStyle: 'italic' }}>
-          any repair preformed is that person, persons, or shop responsibility and said persons may be liable for any damages caused. 
-          Double check your research before you do. "Measure twice, cut once"
-        </div>
-      </div>
+      <style>{`
+        @keyframes fade {
+          0% { opacity: 0; transform: translateY(-10px); }
+          10% { opacity: 1; transform: translateY(0); }
+          90% { opacity: 1; transform: translateY(0); }
+          100% { opacity: 0; transform: translateY(-10px); }
+        }
+        .w-full { width: 100%; }
+        .shadow { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+      `}</style>
     </div>
   );
 }
+

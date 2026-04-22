@@ -2,11 +2,17 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 // SettingsContext loaded lazily to avoid circular deps
 
+// Initialize axios token immediately if present in localStorage
+const initialToken = localStorage.getItem('token');
+if (initialToken) {
+  axios.defaults.headers.common['Authorization'] = `Bearer ${initialToken}`;
+}
+
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(() => localStorage.getItem('token'));
+  const [token, setToken] = useState(initialToken);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -14,7 +20,11 @@ export function AuthProvider({ children }) {
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       axios.get('/api/users/me')
         .then(r => setUser(r.data))
-        .catch(() => { setToken(null); localStorage.removeItem('token'); })
+        .catch(() => { 
+          setToken(null); 
+          localStorage.removeItem('token');
+          delete axios.defaults.headers.common['Authorization'];
+        })
         .finally(() => setLoading(false));
     } else {
       delete axios.defaults.headers.common['Authorization'];

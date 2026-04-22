@@ -12,28 +12,16 @@
 - **Technical Knowledge Base:** A persistent library for service manuals, PDFs, and schematics with full OCR search.
 - **Financial Suite:** Manage invoices, estimates, and track shop revenue with multi-currency support.
 - **Kiosk Display:** A live, dual-panel shop floor dashboard showing active workflow and AI technical focus.
-- **Taskbar Integration:** A Linux tray monitor for real-time CPU/RAM/GPU usage and service controls.
+- **Dedicated Print Queue:** A managed folder for printable documents (.pdf, .txt, .jpg) with a one-click "Print All" function.
+- **File Browser:** Integrated explorer to view and download all data files directly from the web interface.
+- **Taskbar Integration:** A Linux tray monitor with status indicator colors and real-time system monitoring.
 - **Automated Communication:** Integrated email support for sending invoices and photo documentation.
 
 ---
 
 ## Build Instructions
 
-### 1. Building the .RPM (Fedora/RHEL)
-The project includes a dedicated build script for creating an installable RPM package.
-
-**Requirements:**
-- Fedora Linux (or a system with `rpm-build` installed)
-- Node.js v20+ and NPM v10+
-
-**Execution:**
-```bash
-chmod +x build-rpm.sh
-./build-rpm.sh
-```
-The resulting RPM will be located in `~/rpmbuild/RPMS/x86_64/`.
-
-### 2. Building the Docker Image
+### Building the Docker Image
 RepairShop is optimized for Docker environments like TrueNAS SCALE.
 
 **Execution:**
@@ -69,17 +57,30 @@ services:
 - Click **💡 Get AI Guide** for a diagnostic flowchart.
 - Use the **"Kiosk"** radio button to focus a device on the shop floor screen.
 
+### Tray Icon Status
+The taskbar icon provides real-time status of the RepairShop server:
+- 🟢 **Green:** Everything is up and running correctly.
+- 🟡 **Yellow:** Server is starting up (service active, but web server not yet ready).
+- 🔴 **Red:** Server is stopped or the service is not active.
+- 🟠 **Orange:** Error state (server responded with an error or is unreachable).
+
 ---
 
 ## Version History & Changelog
 
-### v11.0.0 (Current)
+### v1.0.0-Beta-Build-04-20-2026 (Current)
+- **Consolidated Interface:** Simplified Settings into logical groups (Shop, User, Operations, Intelligence, System, About).
 - **AI Core Overhaul:**
     - Added **AI Auto-Research**: Periodically downloads repair guides for documented devices.
     - Added **OCR & PDF Learning**: AI can now read and learn from uploaded service manuals.
     - Added **Custom LLM Support**: Ability to upload and use your own `.GGUF` model files.
     - **Persistent State**: AI chat history and input drafts are saved across tab changes and refreshes.
-- **System Tray Monitor:** New Linux taskbar icon with live CPU/RAM/GPU monitoring and service controls.
+- **Operations & Printing:**
+    - **Dedicated Print Queue**: Added a managed folder for printable documents with a one-click "Print All" button (Settings -> Operations).
+    - **File Browser**: New integrated file explorer in Settings to see and download all software-generated files.
+- **System Tray Monitor:**
+    - Enhanced taskbar icon with **color-coded status logic** (Green/Yellow/Red/Orange).
+    - Improved reliability and HTTP health checks.
 - **UI Scaling:** Added a slider in Settings to scale the UI from 0.8x to 2.0x for monitors and TVs.
 - **Data Safety:** Emergency automatic backup to user **Documents** folders during uninstallation.
 - **Email Integration:** Support for Resend/SendGrid to email invoices and technical photos.
@@ -91,7 +92,7 @@ services:
 
 ### v10.1.8
 - Added graceful shutdown handlers for database integrity.
-- Optimized persistent database path logic for RPM installations.
+- Optimized persistent database path logic.
 
 ### v10.1.0
 - Initial implementation of the Kiosk Dashboard.
