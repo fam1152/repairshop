@@ -193,12 +193,16 @@ function DockerComposeEditor() {
   useEffect(() => {
     axios.get('/api/system/docker-compose').then(r => {
       setContent(r.data.content || '');
-      setFilePath(r.data.path || '');
+      setFilePath(r.data.path || '/app/docker-compose.yml');
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch(() => {
+      setFilePath('/app/docker-compose.yml');
+      setLoading(false);
+    });
   }, []);
 
   const save = async (sudoPass = null) => {
+    if (!content.trim()) return alert('Content cannot be empty');
     setSaving(true);
     try {
       const r = await axios.post('/api/system/docker-compose', { content, path: filePath, sudo_password: sudoPass });
@@ -210,7 +214,7 @@ function DockerComposeEditor() {
         const pass = window.prompt('Permission denied. Please enter your sudo password to save to ' + filePath);
         if (pass) return save(pass);
       } else {
-        alert(e.response?.data?.error || 'Error saving');
+        alert(e.response?.data?.error || 'Error saving. Ensure the folder is writable or the file is mounted.');
       }
     }
     setSaving(false);
@@ -220,16 +224,37 @@ function DockerComposeEditor() {
 
   return (
     <div>
-      <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>
-        File: <code style={{ background: 'var(--bg3)', padding: '1px 6px', borderRadius: 4 }}>{filePath || 'Not found on filesystem — saved to database'}</code>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+          File: <code style={{ background: 'var(--bg3)', padding: '2px 6px', borderRadius: 4 }}>{filePath}</code>
+        </div>
+        {!content && <span style={{ fontSize: 11, color: 'var(--warning)', fontWeight: 600 }}>⚠️ No file detected. Paste your config below to save it.</span>}
       </div>
-      <textarea className="form-control" value={content} onChange={e => setContent(e.target.value)}
-        style={{ fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6, minHeight: 400, resize: 'vertical' }} />
-      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-        <button className="btn btn-primary" onClick={save} disabled={saving}>
+      
+      <textarea 
+        className="form-control" 
+        value={content} 
+        onChange={e => setContent(e.target.value)}
+        placeholder="# Paste your docker-compose.yml content here..."
+        style={{ 
+          fontFamily: 'monospace', 
+          fontSize: 12, 
+          lineHeight: 1.6, 
+          minHeight: 450, 
+          resize: 'vertical',
+          background: '#1e293b',
+          color: '#f8fafc',
+          border: '1px solid var(--border)'
+        }} 
+      />
+      
+      <div style={{ display: 'flex', gap: 12, marginTop: 12, alignItems: 'center' }}>
+        <button className="btn btn-primary" onClick={() => save()} disabled={saving}>
           {saved ? '✓ Saved!' : saving ? 'Saving…' : 'Save docker-compose.yml'}
         </button>
-        <div style={{ fontSize: 12, color: 'var(--text3)', alignSelf: 'center' }}>Run <code>docker compose up -d</code> on your host to apply changes.</div>
+        <div style={{ fontSize: 12, color: 'var(--text3)', lineHeight: 1.4 }}>
+          <strong>Note:</strong> Changes take effect after running <code>docker compose up -d</code> on your host.
+        </div>
       </div>
     </div>
   );

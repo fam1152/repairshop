@@ -172,7 +172,7 @@ router.get('/info', async (req, res) => {
     docker_socket: isDockerAvailable(),
     is_podman: isPodman(),
     is_git: fs.existsSync(path.join(__dirname, '../.git')),
-    app_version: 'v11.1.0'
+    app_version: 'v11.1.2'
   });
 });
 

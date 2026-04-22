@@ -1,6 +1,6 @@
 {
   "name": "repairshop",
-  "version": "11.1.0-Beta-Build-04-22-2026",
+  "version": "11.1.2-Beta-Build-04-22-2026",
   "description": "IT Repair Shop Management System",
   "scripts": {
     "install:all": "npm install && cd client && npm install",

@@ -245,6 +245,23 @@ export default function UpdateChecker() {
             </button>
           )}
 
+          {checkResult?.available && !info?.docker_socket && (
+            <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16, width: '100%' }}>
+              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 10 }}>🛠️ Manual Update (Recommended for Production)</div>
+              <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10 }}>
+                Since the management socket is not connected, run these commands on your server to update:
+              </p>
+              <pre style={{ background: '#1e293b', color: '#f8fafc', padding: 12, borderRadius: 8, fontSize: 11, fontFamily: 'monospace', overflow: 'auto' }}>
+                {`# Pull latest image\ndocker pull ${info?.image || 'fam1152/repairshop:latest'}\n\n# Restart with new version\ndocker compose up -d`}
+              </pre>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>
+                Your data in <code>./repairshop-data</code> will be safe.
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
           {info?.is_git && (
             <button
               className="btn btn-sm"
@@ -333,6 +350,16 @@ function Changelog() {
 
   // Full hardcoded changelog — always accurate regardless of DB
   const CHANGELOG = [
+    {
+      version: 'v11.1.2', date: '2026-04-22', type: 'release',
+      changes: [
+        'Added direct docker-compose.yml creation/paste if file not found on host',
+        'Added Manual Update instruction block with CLI commands for production',
+        'Improved docker-compose.yml path detection (checks multiple app locations)',
+        'Enhanced UI with darker, code-friendly editor for configuration files',
+        'Fixed bug in Troubleshooting tab where logs would occasionally stall',
+      ]
+    },
     {
       version: 'v11.1.0', date: '2026-04-22', type: 'release',
       changes: [
@@ -538,7 +565,7 @@ function Changelog() {
     },
   ];
 
-  const [expanded, setExpanded] = useState('v11.1.0');
+  const [expanded, setExpanded] = useState('v11.1.2');
 
   return (
     <div className="card" style={{ marginTop: 16 }}>
