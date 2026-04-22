@@ -4,28 +4,41 @@ const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
 
-// Load RPM-style config if present
-const rpmConfigPath = '/etc/repairshop/repairshop.conf';
-if (fs.existsSync(rpmConfigPath)) {
-  const rpmConfig = fs.readFileSync(rpmConfigPath, 'utf8');
-  rpmConfig.split('\n').forEach(line => {
-    const [key, ...valueParts] = line.split('=');
-    if (key && valueParts.length > 0) {
-      const value = valueParts.join('=').trim().replace(/^["']|["']$/g, '');
-      process.env[key.trim()] = value;
-    }
-  });
-}
+// Determine system data paths
+const dataDir = path.join(__dirname, '../data');
+
+process.env.UPLOADS_PATH = process.env.UPLOADS_PATH || path.join(dataDir, 'uploads');
+process.env.PRINT_QUEUE_PATH = process.env.PRINT_QUEUE_PATH || path.join(dataDir, 'print-queue');
 
 const cron = require('node-cron');
 const activityLogger = require('./activity.middleware');
 const googleUtils = require('./google.utils');
 const db = require('./db');
 
+// ── JWT SECURITY FALLBACK ──
+// If JWT_SECRET is not in env, try to get it from DB. If not in DB, generate and save it.
+if (!process.env.JWT_SECRET) {
+  const settings = db.prepare('SELECT jwt_secret FROM settings WHERE id=1').get();
+  if (settings?.jwt_secret) {
+    process.env.JWT_SECRET = settings.jwt_secret;
+    console.log('[Auth] Using JWT secret from database');
+  } else {
+    const crypto = require('crypto');
+    const newSecret = crypto.randomBytes(64).toString('hex');
+    db.prepare('UPDATE settings SET jwt_secret = ? WHERE id=1').run(newSecret);
+    process.env.JWT_SECRET = newSecret;
+    console.log('[Auth] Generated and saved new JWT secret');
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
-const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+
+const uploadsPath = process.env.UPLOADS_PATH;
+const printQueuePath = process.env.PRINT_QUEUE_PATH;
+
 if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
+if (!fs.existsSync(printQueuePath)) fs.mkdirSync(printQueuePath, { recursive: true });
 
 app.use(cors());
 app.use(express.json());
@@ -59,6 +72,7 @@ app.use('/api/pricebook', require('./routes.pricebook'));
 app.use('/api/notifications', require('./routes.notifications'));
 app.use('/api/workflows', require('./routes.workflows'));
 app.use('/api/users', require('./routes.users'));
+app.use('/api/print', require('./routes.print'));
 
 // Google Automatic Sync Background Jobs
 // Runs every hour
@@ -92,8 +106,23 @@ app.use('/api', activityLogger);
 // Serve React build in production
 const buildPath = path.join(__dirname, '../client/build');
 if (fs.existsSync(buildPath)) {
-  app.use(express.static(buildPath));
-  app.get('*', (req, res) => res.sendFile(path.join(buildPath, 'index.html')));
+  app.use(express.static(buildPath, {
+    setHeaders: (res, path) => {
+      // Don't cache index.html
+      if (path.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
+      } else {
+        // Cache other assets (JS, CSS, images) which are hashed
+        res.setHeader('Cache-Control', 'public, max-age=31536000');
+      }
+    }
+  }));
+  app.get('*', (req, res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.sendFile(path.join(buildPath, 'index.html'));
+  });
 }
 
 // Cron: scheduled automatic backups
@@ -118,6 +147,7 @@ cron.schedule('0 * * * *', async () => {
     const path = require('path');
     const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/repairshop.sqlite');
     const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const printQueuePath = process.env.PRINT_QUEUE_PATH || path.join(__dirname, '../data/print-queue');
     const savePath = schedule.save_path;
 
     if (!fs.existsSync(savePath)) { fs.mkdirSync(savePath, { recursive: true }); }
@@ -129,6 +159,7 @@ cron.schedule('0 * * * *', async () => {
     archive.pipe(output);
     if (fs.existsSync(dbPath)) { try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch(e) {} archive.file(dbPath, { name: 'repairshop.sqlite' }); }
     if (fs.existsSync(uploadsPath)) archive.directory(uploadsPath, 'uploads');
+    if (fs.existsSync(printQueuePath)) archive.directory(printQueuePath, 'print-queue');
     
     // Auto-update LLM models during backup as requested
     try {
@@ -203,6 +234,18 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 });
 
 // ── Graceful Shutdown ──
+// ── Centralized Error Handling ──
+app.use((err, req, res, next) => {
+  console.error(`[Error] ${req.method} ${req.path}:`, err.message);
+  if (process.env.NODE_ENV !== 'production') console.error(err.stack);
+  
+  const status = err.status || 500;
+  res.status(status).json({
+    error: err.message || 'Internal Server Error',
+    status: status
+  });
+});
+
 function shutdown() {
   console.log('\n[Server] Shutting down cleanly...');
   server.close(() => {

@@ -785,6 +785,7 @@ try { db.exec(`ALTER TABLE settings ADD COLUMN ai_search_key TEXT DEFAULT ''`); 
 try { db.exec(`ALTER TABLE settings ADD COLUMN ai_auto_research INTEGER DEFAULT 0`); } catch(e) {}
 try { db.exec(`ALTER TABLE settings ADD COLUMN ollama_model TEXT DEFAULT 'llama3.2'`); } catch(e) {}
 try { db.exec(`ALTER TABLE settings ADD COLUMN ollama_url TEXT DEFAULT ''`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN jwt_secret TEXT DEFAULT ''`); } catch(e) {}
 try { db.exec(`ALTER TABLE settings ADD COLUMN device_types TEXT DEFAULT '["Phone","Laptop","Desktop","Tablet","Printer","Server","Network Device","Monitor","Other"]'`); } catch(e) {}
 try { db.exec(`ALTER TABLE repairs ADD COLUMN is_active_kiosk INTEGER DEFAULT 0`); } catch(e) {}
 try { db.exec(`ALTER TABLE repair_guides ADD COLUMN deleted_at DATETIME`); } catch(e) {}

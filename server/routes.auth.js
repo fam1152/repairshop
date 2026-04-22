@@ -23,7 +23,8 @@ router.post('/login', (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   if (user.active === 0)
     return res.status(403).json({ error: 'Account is disabled. Contact your administrator.' });
-  const token = jwt.sign({ id: user.id, username: user.username, role: user.role, is_kiosk: user.is_kiosk || 0 }, process.env.JWT_SECRET || 'devsecret', { expiresIn: '7d' });
+
+  const token = jwt.sign({ id: user.id, username: user.username, role: user.role, is_kiosk: user.is_kiosk || 0 }, process.env.JWT_SECRET, { expiresIn: '7d' });
   res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
 });
 
