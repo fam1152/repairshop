@@ -108,7 +108,8 @@ db.exec(`
     issued_date DATETIME DEFAULT CURRENT_TIMESTAMP,
     due_date DATETIME,
     paid_date DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS reminders (
@@ -416,6 +417,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS user_preferences (
 // Invoices: balance tracking
 try { db.exec(`ALTER TABLE invoices ADD COLUMN amount_paid REAL DEFAULT 0`); } catch(e) {}
 try { db.exec(`ALTER TABLE invoices ADD COLUMN balance_due REAL DEFAULT 0`); } catch(e) {}
+try { db.exec(`ALTER TABLE invoices ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`); } catch(e) {}
 
 // Invoice payments log
 db.exec(`CREATE TABLE IF NOT EXISTS invoice_payments (
