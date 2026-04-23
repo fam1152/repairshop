@@ -221,7 +221,6 @@ if (SSL_CERT && SSL_KEY && fs.existsSync(SSL_CERT) && fs.existsSync(SSL_KEY)) {
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🔧 IT Repair Shop running at http://0.0.0.0:${PORT}`);
   console.log(`   Access on your network via http://<your-ip>:${PORT}`);
-  if (!SSL_CERT) console.log(`   💡 To enable HTTPS (needed for camera): set SSL_CERT, SSL_KEY, HTTPS_PORT env vars\n`);
 });
 
 // ── Graceful Shutdown ──
