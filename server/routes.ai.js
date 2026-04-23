@@ -394,7 +394,7 @@ async function ollamaGenerate(prompt, system, images = []) {
       });
     });
     req.on('error', reject);
-    req.setTimeout(90000, () => { req.destroy(); reject(new Error('AI generation timeout (Ollama)')); });
+    req.setTimeout(120000, () => { req.destroy(); reject(new Error('AI generation timeout (Ollama)')); });
     req.write(body);
     req.end();
   });

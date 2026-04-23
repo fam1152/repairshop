@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import axios from 'axios';
 
 // Set global timeout for all requests to prevent white screen hangs
-axios.defaults.timeout = 10000;
+axios.defaults.timeout = 120000; // 120 seconds for AI and large queries
 
 const SettingsContext = createContext(null);
 
