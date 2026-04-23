@@ -4,21 +4,27 @@ import { Modal, StatusBadge, Spinner, EmptyState, ConfirmDialog } from '../compo
 import { MagicWandButton } from '../components/AIAssistant';
 import { format } from 'date-fns';
 
-function InvoiceEditor({ invoiceId, onSave, onClose }) {
+function InvoiceEditor({ invoiceId, onSave, onClose, onUpdated }) {
   const [inv, setInv] = useState(null);
   const [saving, setSaving] = useState(false);
   const [newItem, setNewItem] = useState({ description: '', qty: 1, unit_price: '', type: 'part' });
+  const [priceBook, setPriceBook] = useState([]);
+  const [pbOpen, setPbOpen] = useState(false);
+  const [applyPayment, setApplyPayment] = useState(false);
+  const [payAmount, setPayAmount] = useState('');
+  const [payMethod, setPayMethod] = useState('cash');
+  const [payNotes, setPayNotes] = useState('');
 
   useEffect(() => { axios.get(`/api/invoices/${invoiceId}`).then(r => setInv(r.data)); }, [invoiceId]);
   useEffect(() => { axios.get('/api/pricebook').then(r => setPriceBook(r.data)).catch(()=>{}); }, []);
 
   const addItem = () => {
     if (!newItem.description) return;
-    setInv(i => ({ ...i, line_items: [...i.line_items, { ...newItem }] }));
+    setInv(i => ({ ...i, line_items: [...(i.line_items || []), { ...newItem }] }));
     setNewItem({ description: '', qty: 1, unit_price: '', type: 'part' });
   };
 
-  const removeItem = idx => setInv(i => ({ ...i, line_items: i.line_items.filter((_, x) => x !== idx) }));
+  const removeItem = idx => setInv(i => ({ ...i, line_items: (i.line_items || []).filter((_, x) => x !== idx) }));
 
   const subtotal = (inv?.line_items || []).reduce((s, i) => s + (parseFloat(i.qty) || 1) * (parseFloat(i.unit_price) || 0), 0);
 
@@ -79,7 +85,7 @@ function InvoiceEditor({ invoiceId, onSave, onClose }) {
       </div>
 
       <div style={{ fontWeight: 600, fontSize: 12, textTransform: 'uppercase', color: 'var(--text3)', marginBottom: 8 }}>Line items</div>
-      {inv.line_items.map((item, i) => (
+      {(inv.line_items || []).map((item, i) => (
         <div key={i} className="flex" style={{ marginBottom: 6, background: 'var(--bg3)', padding: '7px 10px', borderRadius: 6 }}>
           <span style={{ flex: 2, fontSize: 13 }}>{item.description}</span>
           <span style={{ width: 40, textAlign: 'center', fontSize: 13 }}>× {item.qty}</span>
@@ -250,7 +256,7 @@ export default function Invoices({ initialState }) {
                     <td>{inv.customer_name}</td>
                     <td><StatusBadge status={inv.status} /></td>
                     <td style={{ fontWeight: 600 }}>${(inv.total || 0).toFixed(2)}</td>
-                    <td style={{ color: 'var(--text3)', fontSize: 12 }}>{format(new Date(inv.issued_date), 'MMM d, yyyy')}</td>
+                    <td style={{ color: 'var(--text3)', fontSize: 12 }}>{inv.issued_date ? format(new Date(inv.issued_date), 'MMM d, yyyy') : 'N/A'}</td>
                     <td onClick={e => e.stopPropagation()}>
                       <div className="flex">
                         <button className="btn btn-sm" onClick={() => openPdf(inv.id)}>PDF</button>

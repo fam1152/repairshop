@@ -12,7 +12,10 @@ module.exports = function authMiddleware(req, res, next) {
   if (!token) return res.status(401).json({ error: 'No token' });
   
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    const db = require('./db');
+    const settings = db.prepare('SELECT jwt_secret FROM settings WHERE id=1').get();
+    const secret = process.env.JWT_SECRET || settings?.jwt_secret || 'devsecret';
+    req.user = jwt.verify(token, secret);
     next();
   } catch {
     res.status(401).json({ error: 'Invalid token' });

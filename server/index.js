@@ -11,6 +11,7 @@ process.env.DB_PATH = process.env.DB_PATH || '/data/repairshop.sqlite';
 
 const uploadsPath = process.env.UPLOADS_PATH;
 const printQueuePath = process.env.PRINT_QUEUE_PATH;
+const PORT = process.env.PORT || 3000;
 
 // Ensure base directories exist
 if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
@@ -27,6 +28,8 @@ const cron = require('node-cron');
 const activityLogger = require('./activity.middleware');
 const googleUtils = require('./google.utils');
 const db = require('./db');
+
+const app = express();
 
 app.use(cors());
 app.use(express.json());

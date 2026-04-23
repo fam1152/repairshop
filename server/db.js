@@ -32,11 +32,22 @@ db.exec(`
     invoice_notes TEXT DEFAULT 'Thank you for your business!',
     logo_url TEXT DEFAULT '',
     dark_mode INTEGER DEFAULT 1,
-    currency TEXT DEFAULT 'USD'
+    currency TEXT DEFAULT 'USD',
+    jwt_secret TEXT DEFAULT ''
   );
 
   INSERT OR IGNORE INTO settings (id) VALUES (1);
+`);
 
+// Auto-generate a persistent JWT secret if missing
+const settings = db.prepare('SELECT jwt_secret FROM settings WHERE id=1').get();
+if (!settings?.jwt_secret) {
+  const crypto = require('crypto');
+  const secret = crypto.randomBytes(32).toString('hex');
+  db.prepare('UPDATE settings SET jwt_secret=? WHERE id=1').run(secret);
+}
+
+db.exec(`
   CREATE TABLE IF NOT EXISTS customers (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -322,9 +333,6 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_chat_messages ON chat_messages(created_at);
   CREATE INDEX IF NOT EXISTS idx_user_prefs ON user_preferences(user_id);
-
-
-
 `);
 
 
@@ -784,7 +792,7 @@ try { db.exec(`ALTER TABLE settings ADD COLUMN ai_auto_research INTEGER DEFAULT 
 try { db.exec(`ALTER TABLE settings ADD COLUMN ollama_model TEXT DEFAULT 'llama3.2'`); } catch(e) {}
 try { db.exec(`ALTER TABLE settings ADD COLUMN ollama_url TEXT DEFAULT ''`); } catch(e) {}
 try { db.exec(`ALTER TABLE settings ADD COLUMN jwt_secret TEXT DEFAULT ''`); } catch(e) {}
-try { db.exec(`ALTER TABLE settings ADD COLUMN device_types TEXT DEFAULT '["Phone","Laptop","Desktop","Tablet","Printer","Server","Network Device","Monitor","Other"]'`); } catch(e) {}
+try { db.exec(`ALTER TABLE settings ADD COLUMN device_types TEXT DEFAULT '["Phone","Laptop","Desktop","Tablets","Printer","Server","Network Device","Monitor","Other"]'`); } catch(e) {}
 try { db.exec(`ALTER TABLE repairs ADD COLUMN is_active_kiosk INTEGER DEFAULT 0`); } catch(e) {}
 try { db.exec(`ALTER TABLE repair_guides ADD COLUMN deleted_at DATETIME`); } catch(e) {}
 

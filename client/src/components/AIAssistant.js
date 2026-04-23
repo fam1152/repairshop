@@ -396,6 +396,32 @@ function RepairGuidesTab() {
   );
 }
 
+function CircularGauge({ percent, label, sublabel, color = 'var(--accent)' }) {
+  const radius = 36;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference - (percent / 100) * circumference;
+  
+  return (
+    <div style={{ textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+      <div style={{ position: 'relative', width: 90, height: 90, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <svg width="90" height="90" viewBox="0 0 100 100" style={{ transform: 'rotate(-90deg)' }}>
+          <circle cx="50" cy="50" r={radius} fill="transparent" stroke="var(--bg3)" strokeWidth="8" />
+          <circle 
+            cx="50" cy="50" r={radius} fill="transparent" stroke={color} strokeWidth="8" 
+            strokeDasharray={circumference} strokeDashoffset={offset} strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 0.5s ease' }}
+          />
+        </svg>
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{Math.round(percent)}%</div>
+          <div style={{ fontSize: 9, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase' }}>{label}</div>
+        </div>
+      </div>
+      {sublabel && <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4, fontWeight: 500, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sublabel}</div>}
+    </div>
+  );
+}
+
 function HardwareStats() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -404,31 +430,52 @@ function HardwareStats() {
     axios.get('/api/ai/ram-stats').then(r => { setStats(r.data); setLoading(false); }).catch(() => setLoading(false));
   };
   useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, []);
+  
   if (!stats) return null;
+
+  const ramUsage = Math.round((stats.system_used_mb / stats.system_total_mb) * 100) || 0;
+  const diskUsage = Math.round((stats.system_storage?.used_gb / stats.system_storage?.total_gb) * 100) || 0;
+  const gpuUsage = stats.gpu ? parseInt(stats.gpu.load) : 0;
+  const vramUsage = stats.gpu ? Math.round((stats.gpu.used_mb / stats.gpu.total_mb) * 100) : 0;
+
   return (
-    <div className="grid-2 mt-4" style={{ gap: 16 }}>
-      <div className="card">
-        <div className="flex-between mb-3">
-          <div className="text-sm font-bold">🖥️ GPU & VRAM</div>
+    <div className="mt-4">
+      <div className="card mb-4">
+        <div className="flex-between mb-4">
+          <div className="text-sm font-bold flex-center gap-2">📊 System Performance <span className="badge badge-xs">{stats.cpu?.cores} Cores</span></div>
           <button className={`btn btn-icon btn-xs ${loading ? 'spinning' : ''}`} onClick={load}>↻</button>
         </div>
-        {stats.gpu ? (
-          <div>
-            <div style={{ fontWeight: 700, color: 'var(--accent)' }}>{stats.gpu.type} {stats.gpu.name}</div>
-            <div className="text-sm mt-1">Usage: {stats.gpu.load}</div>
-            <div className="text-sm">VRAM: {stats.gpu.used_mb}MB / {stats.gpu.total_mb}MB</div>
-          </div>
-        ) : <div className="text-sm text-muted">No GPU detected (Using CPU)</div>}
+        
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 16, padding: '10px 0' }}>
+          <CircularGauge percent={stats.cpu?.load || 0} label="CPU" sublabel={stats.cpu?.model?.split('@')[0]?.trim() || 'Processor'} color="#3b82f6" />
+          <CircularGauge percent={ramUsage} label="RAM" sublabel={`${(stats.system_used_mb/1024).toFixed(1)} / ${(stats.system_total_mb/1024).toFixed(0)} GB`} color="#8b5cf6" />
+          {stats.gpu ? (
+            <CircularGauge percent={gpuUsage} label="GPU" sublabel={stats.gpu.name} color="#10b981" />
+          ) : (
+            <CircularGauge percent={vramUsage} label="VRAM" sublabel="No GPU" color="#f59e0b" />
+          )}
+          <CircularGauge percent={diskUsage} label="DISK" sublabel={`${stats.system_storage?.used_gb} / ${stats.system_storage?.total_gb} GB`} color="#ef4444" />
+        </div>
       </div>
-      <div className="card">
-        <div className="flex-between mb-3">
-          <div className="text-sm font-bold">📊 AI Storage Usage</div>
-          <button className={`btn btn-icon btn-xs ${loading ? 'spinning' : ''}`} onClick={load}>↻</button>
+
+      <div className="grid-2" style={{ gap: 16 }}>
+        <div className="card">
+          <div className="text-sm font-bold mb-3">🖥️ Hardware Specs</div>
+          <div className="text-xs space-y-2">
+            <div className="flex-between"><span className="text-muted">CPU Model:</span> <span className="font-bold text-right" style={{maxWidth: '60%'}}>{stats.cpu?.model}</span></div>
+            <div className="flex-between"><span className="text-muted">Total RAM:</span> <span className="font-bold">{(stats.system_total_mb/1024).toFixed(1)} GB</span></div>
+            <div className="flex-between"><span className="text-muted">GPU Type:</span> <span className="font-bold">{stats.gpu ? stats.gpu.type : 'Integrated/None'}</span></div>
+            <div className="flex-between"><span className="text-muted">Root Storage:</span> <span className="font-bold">{stats.system_storage?.total_gb} GB</span></div>
+          </div>
         </div>
-        <div className="grid-2 text-sm" style={{ gap: '4px 12px' }}>
-          <div>Models:</div><div className="font-bold">{formatSize(stats.storage?.models_bytes)}</div>
-          <div>Guides ({stats.storage?.count_guides}):</div><div className="font-bold">{formatSize(stats.storage?.guides_bytes)}</div>
-          <div>Training:</div><div className="font-bold">{formatSize(stats.storage?.training_bytes)}</div>
+        <div className="card">
+          <div className="text-sm font-bold mb-3">📦 AI Data Index</div>
+          <div className="grid-2 text-xs" style={{ gap: '6px 12px' }}>
+            <div className="text-muted">Models Size:</div><div className="font-bold">{formatSize(stats.storage?.models_bytes)}</div>
+            <div className="text-muted">Guides:</div><div className="font-bold">{stats.storage?.count_guides} ({formatSize(stats.storage?.guides_bytes)})</div>
+            <div className="text-muted">Training Data:</div><div className="font-bold">{formatSize(stats.storage?.training_bytes)}</div>
+            <div className="text-muted">Ollama Process:</div><div className="font-bold">{stats.ollama_rss_mb} MB</div>
+          </div>
         </div>
       </div>
     </div>
@@ -554,9 +601,60 @@ export function AISettings() {
               <div className="form-group">
                 <label className="text-sm">Connectivity Mode</label>
                 <select className="form-control mb-2" value={config.ai_mode} onChange={e => setConfig({...config, ai_mode: e.target.value})}>
-                  <option value="offline">Offline (Private)</option><option value="cloud">Cloud (High Intel)</option><option value="hybrid">Hybrid (Local + Search)</option>
+                  <option value="offline">Offline (Local Ollama)</option>
+                  <option value="cloud">Cloud AI (Gemini/OpenAI)</option>
                 </select>
               </div>
+
+              {config.ai_mode === 'cloud' && (
+                <div style={{ background: 'var(--bg3)', padding: 12, borderRadius: 8, marginTop: 10, border: '1px solid var(--border)' }}>
+                  <div className="form-group">
+                    <label className="text-sm">Cloud Provider</label>
+                    <select className="form-control mb-2" value={config.ai_cloud_provider} onChange={e => setConfig({...config, ai_cloud_provider: e.target.value})}>
+                      <option value="gemini">Google Gemini (Recommended)</option>
+                      <option value="openai">OpenAI (GPT-4)</option>
+                    </select>
+                  </div>
+                  <div className="form-group">
+                    <div className="flex-between">
+                      <label className="text-sm">{config.ai_cloud_provider === 'gemini' ? 'Gemini API Key' : 'OpenAI API Key'}</label>
+                      {config.ai_cloud_provider === 'gemini' && (
+                        <button 
+                          className="btn btn-xs btn-outline" 
+                          onClick={async () => {
+                            if (!config.ai_cloud_key) return alert('Enter a key first');
+                            setActionLoading('test-gemini');
+                            try {
+                              const r = await axios.post('/api/ai/test-gemini', { key: config.ai_cloud_key });
+                              if (r.data.ok) alert('Gemini API Key is valid and connected!');
+                            } catch(e) {
+                              alert('Connection Failed: ' + (e.response?.data?.error || e.message));
+                            }
+                            setActionLoading(null);
+                          }}
+                          disabled={actionLoading === 'test-gemini'}
+                        >
+                          {actionLoading === 'test-gemini' ? 'Testing…' : 'Test Connection'}
+                        </button>
+                      )}
+                    </div>
+                    <input 
+                      type="password"
+                      className="form-control" 
+                      value={config.ai_cloud_key} 
+                      onChange={e => setConfig({...config, ai_cloud_key: e.target.value})} 
+                      placeholder="Paste your API key here…"
+                    />
+                    <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                      {config.ai_cloud_provider === 'gemini' ? (
+                        <span>Get a free key at <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" style={{color:'var(--accent)'}}>Google AI Studio</a>. Data is not used for training via API.</span>
+                      ) : (
+                        <span>Enter your OpenAI platform key.</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="form-group mt-3">
                 <label className="text-sm">Ollama API URL (Optional Override)</label>

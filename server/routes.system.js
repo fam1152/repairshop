@@ -12,6 +12,21 @@ function isAdmin(req, res, next) {
   next();
 }
 
+// ── DOCKER / PODMAN SOCKET DETECTION ──
+const getDockerSocket = () => {
+  const user = require('os').userInfo().uid;
+  const paths = [
+    '/var/run/docker.sock',
+    `/run/user/${user}/podman/podman.sock`,
+    '/run/podman/podman.sock',
+    '/var/run/podman.sock'
+  ];
+  for (const p of paths) {
+    if (fs.existsSync(p)) return p;
+  }
+  return '/var/run/docker.sock'; // Fallback
+};
+
 // In-memory log buffer (last 500 lines)
 const LOG_BUFFER = [];
 const MAX_LOGS = 500;
@@ -31,7 +46,7 @@ console.warn = (...args) => { origWarn(...args); addLog('warn', args.join(' '));
 console.error = (...args) => { origError(...args); addLog('error', args.join(' ')); };
 
 // Add startup log
-addLog('info', `[System] RepairShop v1.0.0-Beta-Build-04-20-2026 started at ${new Date().toISOString()}`);
+addLog('info', `[System] RepairShop v11.1.3 started at ${new Date().toISOString()}`);
 addLog('info', `[System] Node.js ${process.version} | PID ${process.pid}`);
 
 // Get live logs
@@ -69,6 +84,8 @@ router.get('/logs/stream', isAdmin, (req, res) => {
 router.get('/info', isAdmin, (req, res) => {
   const dbPath = process.env.DB_PATH || '/data/repairshop.sqlite';
   const dbSize = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
+  const socket = getDockerSocket();
+  const socketAvailable = fs.existsSync(socket);
 
   res.json({
     node_version: process.version,
@@ -80,6 +97,8 @@ router.get('/info', isAdmin, (req, res) => {
     platform: process.platform,
     env: process.env.NODE_ENV || 'development',
     started_at: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+    docker_host: socketAvailable,
+    socket_path: socket
   });
 });
 
@@ -117,9 +136,10 @@ router.post('/reboot', isAdmin, async (req, res) => {
       addLog('info', `[Reboot] Backup saved: ${backupName}`);
 
       // Now restart via Docker if socket available
-      if (fs.existsSync('/var/run/docker.sock')) {
+      const socket = getDockerSocket();
+      if (fs.existsSync(socket)) {
         const Docker = require('dockerode');
-        const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+        const docker = new Docker({ socketPath: socket });
         const containers = await docker.listContainers();
 
         // Restart Ollama first so it's ready when RepairShop comes back up
@@ -136,12 +156,10 @@ router.post('/reboot', isAdmin, async (req, res) => {
           } catch(e) {
             addLog('warn', `[Reboot] Ollama restart error: ${e.message}`);
           }
-        } else {
-          addLog('warn', '[Reboot] Ollama container not found - skipping');
         }
 
         // Now restart RepairShop itself
-        const self = containers.find(c => c.Names.some(n => n.includes('repairshop')));
+        const self = containers.find(c => c.Names.some(n => n.includes('repairshop')) || c.Image.includes('repairshop'));
         if (self) {
           addLog('info', '[Reboot] Restarting RepairShop container...');
           setTimeout(() => { docker.getContainer(self.Id).restart({ t: 3 }, () => {}); }, 2000);
@@ -149,8 +167,8 @@ router.post('/reboot', isAdmin, async (req, res) => {
         }
       }
 
-      // Fallback: exit process (Docker restart policy will bring it back)
-      addLog('info', '[Reboot] Exiting process (Docker will restart)…');
+      // Fallback: exit process (Docker/Podman restart policy will bring it back)
+      addLog('info', '[Reboot] Exiting process (Container manager will restart)…');
       setTimeout(() => process.exit(0), 2000);
 
     } catch(e) {
@@ -224,13 +242,13 @@ router.post('/fix-permissions', isAdmin, (req, res) => {
   if (!sudo_password) return res.status(400).json({ error: 'sudo password required', needs_password: true });
 
   const { exec } = require('child_process');
-  const dataDir = path.resolve(__dirname, '../data');
+  const dataDir = '/data';
   const composePath = path.resolve(__dirname, '../../docker-compose.yml');
   
   addLog('warn', `[System] Fixing file permissions in ${dataDir} initiated by ${req.user.username}`);
   
   // Attempt to chown the data dir and compose file to current user
-  const cmd = `echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S chown -R $(id -u):$(id -g) ${dataDir} && echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S chmod -R 755 ${dataDir} ${fs.existsSync(composePath) ? `&& echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S chown $(id -u):$(id -g) ${composePath}` : ''}`;
+  const cmd = `echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S chown -R $(id -u):$(id -g) ${dataDir} && echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S chmod -R 755 ${dataDir}`;
 
   exec(cmd, (err, stdout, stderr) => {
     if (err) {
@@ -243,12 +261,10 @@ router.post('/fix-permissions', isAdmin, (req, res) => {
   });
 });
 
-
 // ── DATABASE OPTIMIZE ──
 router.post('/db-optimize', isAdmin, (req, res) => {
   try {
     addLog('info', '[DB] Running VACUUM and ANALYZE...');
-    const db = require('./db');
     const before = db.prepare("SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()").get();
     db.exec('VACUUM');
     db.exec('ANALYZE');
@@ -270,7 +286,6 @@ router.get('/files', isAdmin, (req, res) => {
   const subDir = req.query.path || '';
   const targetDir = path.resolve(dataDir, subDir);
 
-  // Security: Prevent directory traversal
   if (!targetDir.startsWith(path.resolve(dataDir))) {
     return res.status(403).json({ error: 'Access denied' });
   }
@@ -296,51 +311,13 @@ router.get('/files', isAdmin, (req, res) => {
   }
 });
 
-router.get('/files/view', isAdmin, (req, res) => {
-  const dataDir = '/data';
-  const filePath = req.query.path;
-  if (!filePath) return res.status(400).json({ error: 'Path required' });
-  const targetPath = path.resolve(dataDir, filePath);
-
-  if (!targetPath.startsWith(path.resolve(dataDir))) {
-    return res.status(403).json({ error: 'Access denied' });
-  }
-
-  if (!fs.existsSync(targetPath)) return res.status(404).json({ error: 'File not found' });
-  
-  const ext = path.extname(targetPath).toLowerCase();
-  const binaryTypes = ['.sqlite', '.zip', '.exe', '.dll'];
-  if (binaryTypes.includes(ext)) {
-    return res.status(400).json({ error: 'Cannot view binary file. Use download instead.' });
-  }
-
-  res.sendFile(targetPath);
-});
-
-router.get('/files/download', isAdmin, (req, res) => {
-  const dataDir = '/data';
-  const filePath = req.query.path;
-  if (!filePath) return res.status(400).json({ error: 'Path required' });
-  const targetPath = path.resolve(dataDir, filePath);
-
-  if (!targetPath.startsWith(path.resolve(dataDir))) {
-    return res.status(403).json({ error: 'Access denied' });
-  }
-
-  if (!fs.existsSync(targetPath)) return res.status(404).json({ error: 'File not found' });
-  res.download(targetPath);
-});
-
-module.exports = router;
-module.exports.addLog = addLog;
-
-// ── FORCED DOCKER UPDATE ──
+// ── FORCED UPDATE ──
 router.post('/force-update', isAdmin, async (req, res) => {
   const image = process.env.DOCKER_IMAGE || 'fam1152/repairshop:latest';
-  const { sudo_password } = req.body;
+  const socket = getDockerSocket();
 
-  if (!fs.existsSync('/var/run/docker.sock')) {
-    return res.status(400).json({ error: 'Docker socket not available', needs_sudo: false });
+  if (!fs.existsSync(socket)) {
+    return res.status(400).json({ error: 'Docker/Podman socket not available. Ensure you mapped it in docker-compose.yml', socket_tried: socket });
   }
 
   addLog('warn', `[Update] Force update initiated by ${req.user.username}`);
@@ -349,7 +326,7 @@ router.post('/force-update', isAdmin, async (req, res) => {
   setTimeout(async () => {
     try {
       const Docker = require('dockerode');
-      const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+      const docker = new Docker({ socketPath: socket });
 
       addLog('info', `[Update] Pulling ${image}…`);
       await new Promise((resolve, reject) => {
@@ -361,7 +338,7 @@ router.post('/force-update', isAdmin, async (req, res) => {
       addLog('info', '[Update] Pull complete. Restarting…');
 
       const containers = await docker.listContainers();
-      const self = containers.find(c => c.Names.some(n => n.includes('repairshop')));
+      const self = containers.find(c => c.Names.some(n => n.includes('repairshop')) || c.Image.includes('repairshop'));
       if (self) {
         setTimeout(() => docker.getContainer(self.Id).restart({ t: 3 }, () => {}), 2000);
       } else {
@@ -379,16 +356,14 @@ router.post('/compose-update', isAdmin, (req, res) => {
   if (!sudo_password) return res.status(400).json({ error: 'sudo password required', needs_password: true });
 
   const { exec } = require('child_process');
-  const path = require('path');
   const composePaths = ['./docker-compose.yml', '/app/docker-compose.yml', '../../docker-compose.yml'];
   const composePath = composePaths.find(p => fs.existsSync(p)) || './docker-compose.yml';
   const dir = path.dirname(path.resolve(composePath));
 
-  addLog('info', `[Update] Running docker compose pull + up via sudo in ${dir}`);
-  res.json({ ok: true, message: 'Running docker compose pull + up…' });
+  addLog('info', `[Update] Running compose pull + up via sudo in ${dir}`);
+  res.json({ ok: true, message: 'Running compose pull + up…' });
 
-  // Use echo to pipe password to sudo
-  const cmd = `echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S sh -c "cd ${dir} && docker compose pull && docker compose up -d" 2>&1`;
+  const cmd = `echo '${sudo_password.replace(/'/g, "'\\''")}' | sudo -S sh -c "cd ${dir} && (docker compose pull || podman-compose pull) && (docker compose up -d || podman-compose up -d)" 2>&1`;
   exec(cmd, { timeout: 120000 }, (err, stdout, stderr) => {
     if (err) {
       addLog('error', `[Update] Compose update error: ${err.message}`);
@@ -399,3 +374,6 @@ router.post('/compose-update', isAdmin, (req, res) => {
     }
   });
 });
+
+module.exports = router;
+module.exports.addLog = addLog;

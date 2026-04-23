@@ -11,10 +11,19 @@ const Tesseract = require('tesseract.js');
 const { v4: uuidv4 } = require('uuid');
 const upload = multer({ limits: { fileSize: 20 * 1024 * 1024 } }); // 20MB limit
 const axios = require('axios');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const OLLAMA_URL_ENV = process.env.OLLAMA_URL || 'http://ollama:11434';
 let DISCOVERED_OLLAMA_URL = OLLAMA_URL_ENV;
 const OLLAMA_MODEL_DEFAULT = process.env.OLLAMA_MODEL || 'llama3.2';
+
+// ── Gemini Configuration ──
+function getGeminiClient() {
+  const settings = db.prepare('SELECT ai_cloud_key FROM settings WHERE id=1').get();
+  const apiKey = settings?.ai_cloud_key || process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  return new GoogleGenerativeAI(apiKey);
+}
 
 // Helper to get effective Ollama URL (prefers DB setting)
 function getOllamaUrl() {
@@ -24,7 +33,43 @@ function getOllamaUrl() {
   } catch(e) { return DISCOVERED_OLLAMA_URL; }
 }
 
-// ── Auto-Discovery for Ollama ──
+// ── Unified AI Generation ──
+async function unifiedGenerate(prompt, system, images = []) {
+  const settings = db.prepare('SELECT ai_mode, ai_cloud_provider, ollama_model FROM settings WHERE id=1').get();
+  
+  // Use Gemini if mode is 'cloud' and provider is 'gemini'
+  if (settings?.ai_mode === 'cloud' && settings?.ai_cloud_provider === 'gemini') {
+    return geminiGenerate(prompt, system, images);
+  }
+  
+  // Default to Ollama
+  return ollamaGenerate(prompt, system, images);
+}
+
+async function geminiGenerate(prompt, system, images = []) {
+  const client = getGeminiClient();
+  if (!client) throw new Error('Gemini API Key not configured in Settings.');
+
+  // Use standard model names
+  const modelName = images.length > 0 ? 'gemini-1.5-flash' : 'gemini-1.5-pro';
+  const model = client.getGenerativeModel({ model: modelName });
+
+  const parts = [{ text: `${system}\n\nUser Request:\n${prompt}` }];
+  
+  // Add images if present
+  images.forEach(imgBase64 => {
+    parts.push({
+      inlineData: {
+        data: imgBase64,
+        mimeType: 'image/jpeg'
+      }
+    });
+  });
+
+  const result = await model.generateContent(parts);
+  return result.response.text();
+}
+
 async function scanForOllama() {
   const subnets = ['127.0.0.1', 'host.docker.internal', '172.17.0.1'];
   try {
@@ -103,6 +148,27 @@ router.get('/status', async (req, res) => {
   }
 });
 
+router.post('/test-gemini', async (req, res) => {
+  const { key } = req.body;
+  if (!key) return res.status(400).json({ error: 'API key required' });
+  try {
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(key);
+    // Try Flash first, then 8B as fallback
+    let model;
+    try {
+      model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      await model.generateContent("Say 'ok'");
+    } catch(e) {
+      model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-8b" });
+      await model.generateContent("Say 'ok'");
+    }
+    res.json({ ok: true });
+  } catch(e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 router.use(auth);
 
 // ── Install Ollama ──
@@ -140,24 +206,49 @@ router.post('/pull-model', async (req, res) => {
 // ── RAM / memory / GPU stats ──
 router.get('/ram-stats', async (req, res) => {
   const fs = require('fs');
+  const os = require('os');
   const { execSync } = require('child_process');
   const stats = {
     system_total_mb: 0, system_used_mb: 0, system_available_mb: 0,
     node_heap_mb: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
     ollama_container_mb: 0, ollama_rss_mb: 0,
+    cpu: { model: '', cores: 0, load: 0 },
     gpu: null,
+    system_storage: { total_gb: 0, used_gb: 0, free_gb: 0 },
     storage: { guides_bytes: 0, models_bytes: 0, training_bytes: 0, count_guides: 0 }
   };
 
   // Basic System RAM
   try {
-    const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
-    const get = key => { const m = meminfo.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm')); return m ? parseInt(m[1]) * 1024 : 0; };
-    const total = get('MemTotal'); const available = get('MemAvailable');
-    stats.system_total_mb = Math.round(total / 1024 / 1024);
-    stats.system_available_mb = Math.round(available / 1024 / 1024);
+    stats.system_total_mb = Math.round(os.totalmem() / 1024 / 1024);
+    stats.system_available_mb = Math.round(os.freemem() / 1024 / 1024);
     stats.system_used_mb = stats.system_total_mb - stats.system_available_mb;
   } catch(e) {}
+
+  // CPU Info
+  try {
+    const cpus = os.cpus();
+    stats.cpu.model = cpus[0].model;
+    stats.cpu.cores = cpus.length;
+    // Calculate simple load from 1-min load average
+    stats.cpu.load = Math.round((os.loadavg()[0] / os.cpus().length) * 100);
+  } catch(e) {}
+
+  // System Storage (Disk)
+  try {
+    const df = execSync('df -B1 /data', { encoding: 'utf8' }).split('\n')[1].split(/\s+/);
+    // [filesystem, blocks, used, available, capacity, mount]
+    stats.system_storage.total_gb = Math.round(parseInt(df[1]) / 1024 / 1024 / 1024);
+    stats.system_storage.used_gb = Math.round(parseInt(df[2]) / 1024 / 1024 / 1024);
+    stats.system_storage.free_gb = Math.round(parseInt(df[3]) / 1024 / 1024 / 1024);
+  } catch(e) {
+    try {
+      const df2 = execSync('df -B1 /', { encoding: 'utf8' }).split('\n')[1].split(/\s+/);
+      stats.system_storage.total_gb = Math.round(parseInt(df2[1]) / 1024 / 1024 / 1024);
+      stats.system_storage.used_gb = Math.round(parseInt(df2[2]) / 1024 / 1024 / 1024);
+      stats.system_storage.free_gb = Math.round(parseInt(df2[3]) / 1024 / 1024 / 1024);
+    } catch(e2) {}
+  }
 
   // GPU Monitoring (Nvidia)
   try {
@@ -378,7 +469,7 @@ You have access to a background tool that can OCR images and parse PDFs to add t
   if (history && history.length > 0) prompt = history.map(h => `${h.role === 'user' ? 'User' : 'AI'}: ${h.content}`).join('\n') + `\nUser: ${message}`;
 
   try {
-    const response = await ollamaGenerate(prompt, system);
+    const response = await unifiedGenerate(prompt, system);
     res.json({ result: response, model: OLLAMA_MODEL_DEFAULT });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
@@ -399,7 +490,7 @@ router.post('/diagnose', upload.single('image'), async (req, res) => {
   const prompt = `Device: ${[device_type, device_brand, device_model].filter(Boolean).join(' ') || 'Unknown'}\nSymptoms: ${symptoms}\n${existing_notes ? `Notes: ${existing_notes}` : ''}\n\n${partsContext}`;
 
   try {
-    const response = await ollamaGenerate(prompt, system, images);
+    const response = await unifiedGenerate(prompt, system, images);
     res.json({ result: response, model: images.length > 0 ? 'llama3.2-vision' : OLLAMA_MODEL_DEFAULT });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
@@ -424,7 +515,7 @@ RULES:
 
   const prompt = `Repair: ${repair_title || 'General'}\nDevice: ${device_type || 'Device'}\n\nRough notes to expand and format:\n"${raw_notes}"`;
   try {
-    const response = await ollamaGenerate(prompt, system);
+    const response = await unifiedGenerate(prompt, system);
     res.json({ result: response, model: OLLAMA_MODEL_DEFAULT });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
@@ -438,7 +529,7 @@ router.post('/customer-message', async (req, res) => {
   const system = `Friendly customer service assistant for ${ctx.shop_name}.`;
   const prompt = `Draft a ${message_type || 'status_update'} message for ${repair.customer_name}. Status: ${repair.status}. Write message only.`;
   try {
-    const response = await ollamaGenerate(prompt, system);
+    const response = await unifiedGenerate(prompt, system);
     res.json({ result: response.trim(), model: OLLAMA_MODEL });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
@@ -450,7 +541,7 @@ router.post('/reorder-suggestions', async (req, res) => {
   const system = `Inventory analyst for ${ctx.shop_name}. Analyze stock and give reorder advice.`;
   const prompt = `Inventory:\n${items.map(i => `${i.name} | Stock: ${i.quantity} | Min: ${i.quantity_min}`).join('\n')}`;
   try {
-    const response = await ollamaGenerate(prompt, system);
+    const response = await unifiedGenerate(prompt, system);
     res.json({ result: response, model: OLLAMA_MODEL_DEFAULT });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
@@ -462,7 +553,7 @@ router.post('/insights', async (req, res) => {
   const system = `Business analyst for ${ctx.shop_name}. Provide actionable insights.`;
   const prompt = `Generate business summary for period: ${period || 'month'}`;
   try {
-    const response = await ollamaGenerate(prompt, system);
+    const response = await unifiedGenerate(prompt, system);
     res.json({ result: response, model: OLLAMA_MODEL_DEFAULT });
   } catch(e) { res.status(503).json({ error: e.message }); }
 });
@@ -618,7 +709,7 @@ Format the output in clean Markdown.`;
     finalSystem += `\n\nWEB RESEARCH RESULTS:\n${searchResults}`;
   }
 
-  const response = await ollamaGenerate(prompt, finalSystem);
+  const response = await unifiedGenerate(prompt, finalSystem);
   
   // Save to DB
   db.prepare('INSERT INTO repair_guides (id, device_brand, device_model, issue, guide_content) VALUES (?,?,?,?,?)')
