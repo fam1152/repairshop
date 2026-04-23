@@ -262,6 +262,7 @@ export default function UpdateChecker() {
         </div>
 
         <div style={{ display: 'flex', gap: 10, marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
+
           {info?.is_git && (
             <button
               className="btn btn-sm"

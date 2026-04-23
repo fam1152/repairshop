@@ -189,7 +189,7 @@ router.get('/ram-stats', async (req, res) => {
     stats.storage.count_guides = g.c || 0;
     stats.storage.guides_bytes = g.s || 0;
 
-    const trainPath = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'ai-training.json');
+    const trainPath = path.join(process.env.UPLOADS_PATH || '/data/uploads', 'ai-training.json');
     if (fs.existsSync(trainPath)) stats.storage.training_bytes = fs.statSync(trainPath).size;
 
     // Estimate model sizes from Ollama
@@ -237,7 +237,7 @@ async function getAIContext() {
   const manufacturers = db.prepare('SELECT name, device_types FROM manufacturers WHERE active=1').all();
   const shopInfo = `Supported Manufacturers: ${manufacturers.map(m => `${m.name} (${JSON.parse(m.device_types || '[]').join(', ')})`).join('; ')}\nAvailable Device Types: ${settings?.device_types || '[]'}`;
   
-  const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+  const uploadsBase = process.env.UPLOADS_PATH || '/data/uploads';
   const trainPath = path.join(uploadsBase, 'ai-training.json');
   let training = '';
   if (fs.existsSync(trainPath)) {
@@ -470,7 +470,7 @@ router.post('/insights', async (req, res) => {
 // ── 6. REPAIR GUIDES & KNOWLEDGE BASE ──
 router.get('/guides', (req, res) => {
   const { brand, model, q, type, source, include_deleted } = req.query;
-  const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+  const uploadsBase = process.env.UPLOADS_PATH || '/data/uploads';
   const kbPath = path.join(uploadsBase, 'knowledge-base');
   if (!fs.existsSync(kbPath)) fs.mkdirSync(kbPath, { recursive: true });
 
@@ -544,7 +544,7 @@ router.delete('/guides/:id', (req, res) => {
   const { id } = req.params;
   if (id.startsWith('file:')) {
     const filename = id.replace('file:', '');
-    const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const uploadsBase = process.env.UPLOADS_PATH || '/data/uploads';
     const oldPath = path.join(uploadsBase, 'knowledge-base', filename);
     const newPath = oldPath + '.deleted';
     if (fs.existsSync(oldPath)) fs.renameSync(oldPath, newPath);
@@ -558,7 +558,7 @@ router.post('/guides/:id/restore', (req, res) => {
   const { id } = req.params;
   if (id.startsWith('file:')) {
     const filename = id.replace('file:', '');
-    const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const uploadsBase = process.env.UPLOADS_PATH || '/data/uploads';
     const oldPath = path.join(uploadsBase, 'knowledge-base', filename);
     const newPath = oldPath.replace('.deleted', '');
     if (fs.existsSync(oldPath)) fs.renameSync(oldPath, newPath);
@@ -572,7 +572,7 @@ router.get('/guides/:id/download', (req, res) => {
   const { id } = req.params;
   if (id.startsWith('file:')) {
     const filename = id.replace('file:', '');
-    const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const uploadsBase = process.env.UPLOADS_PATH || '/data/uploads';
     const filePath = path.join(uploadsBase, 'knowledge-base', filename);
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found' });
     res.download(filePath);
@@ -629,7 +629,7 @@ Format the output in clean Markdown.`;
 
 // ── TRAINING ──
 router.get('/training', (req, res) => {
-  const trainPath = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'ai-training.json');
+  const trainPath = path.join(process.env.UPLOADS_PATH || '/data/uploads', 'ai-training.json');
   if (require('fs').existsSync(trainPath)) return res.json(JSON.parse(require('fs').readFileSync(trainPath, 'utf8')));
   res.json({ examples: [], system_context: '' });
 });
@@ -661,7 +661,7 @@ router.post('/training/upload', upload.single('file'), async (req, res) => {
 
     if (!text.trim()) throw new Error('No text content found in file');
 
-    const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const uploadsBase = process.env.UPLOADS_PATH || '/data/uploads';
     const kbPath = path.join(uploadsBase, 'knowledge-base');
     if (!fs.existsSync(kbPath)) fs.mkdirSync(kbPath, { recursive: true });
 
@@ -701,7 +701,7 @@ router.post('/download-tool', async (req, res) => {
 
     if (!text.trim()) throw new Error('Could not extract text from downloaded file');
 
-    const uploadsBase = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+    const uploadsBase = process.env.UPLOADS_PATH || '/data/uploads';
     const kbPath = path.join(uploadsBase, 'knowledge-base');
     if (!fs.existsSync(kbPath)) fs.mkdirSync(kbPath, { recursive: true });
 
@@ -719,7 +719,7 @@ router.post('/download-tool', async (req, res) => {
 // ── OLLAMA MODEL MANAGEMENT ──
 router.post('/models/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No model file provided' });
-  const modelDir = path.join(process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads'), 'custom-models');
+  const modelDir = path.join(process.env.UPLOADS_PATH || '/data/uploads', 'custom-models');
   if (!fs.existsSync(modelDir)) fs.mkdirSync(modelDir, { recursive: true });
   
   const savePath = path.join(modelDir, req.file.originalname);

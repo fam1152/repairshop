@@ -8,7 +8,7 @@ const { exec } = require('child_process');
 
 router.use(auth);
 
-const printPath = process.env.PRINT_QUEUE_PATH || path.join(__dirname, '../data/print-queue');
+const printPath = process.env.PRINT_QUEUE_PATH || '/data/print-queue';
 if (!fs.existsSync(printPath)) fs.mkdirSync(printPath, { recursive: true });
 
 const storage = multer.diskStorage({

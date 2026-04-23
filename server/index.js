@@ -5,40 +5,28 @@ const path = require('path');
 const fs = require('fs');
 
 // Determine system data paths
-const dataDir = path.join(__dirname, '../data');
+process.env.UPLOADS_PATH = process.env.UPLOADS_PATH || '/data/uploads';
+process.env.PRINT_QUEUE_PATH = process.env.PRINT_QUEUE_PATH || '/data/print-queue';
+process.env.DB_PATH = process.env.DB_PATH || '/data/repairshop.sqlite';
 
-process.env.UPLOADS_PATH = process.env.UPLOADS_PATH || path.join(dataDir, 'uploads');
-process.env.PRINT_QUEUE_PATH = process.env.PRINT_QUEUE_PATH || path.join(dataDir, 'print-queue');
+const uploadsPath = process.env.UPLOADS_PATH;
+const printQueuePath = process.env.PRINT_QUEUE_PATH;
+
+// Ensure base directories exist
+if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
+if (!fs.existsSync(printQueuePath)) fs.mkdirSync(printQueuePath, { recursive: true });
+
+// Ensure sub-directories for uploads exist
+const subDirs = ['avatars', 'photos', 'customer-docs', 'custom-models'];
+subDirs.forEach(dir => {
+  const p = path.join(uploadsPath, dir);
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+});
 
 const cron = require('node-cron');
 const activityLogger = require('./activity.middleware');
 const googleUtils = require('./google.utils');
 const db = require('./db');
-
-// ── JWT SECURITY FALLBACK ──
-// If JWT_SECRET is not in env, try to get it from DB. If not in DB, generate and save it.
-if (!process.env.JWT_SECRET) {
-  const settings = db.prepare('SELECT jwt_secret FROM settings WHERE id=1').get();
-  if (settings?.jwt_secret) {
-    process.env.JWT_SECRET = settings.jwt_secret;
-    console.log('[Auth] Using JWT secret from database');
-  } else {
-    const crypto = require('crypto');
-    const newSecret = crypto.randomBytes(64).toString('hex');
-    db.prepare('UPDATE settings SET jwt_secret = ? WHERE id=1').run(newSecret);
-    process.env.JWT_SECRET = newSecret;
-    console.log('[Auth] Generated and saved new JWT secret');
-  }
-}
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-const uploadsPath = process.env.UPLOADS_PATH;
-const printQueuePath = process.env.PRINT_QUEUE_PATH;
-
-if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
-if (!fs.existsSync(printQueuePath)) fs.mkdirSync(printQueuePath, { recursive: true });
 
 app.use(cors());
 app.use(express.json());
@@ -145,9 +133,9 @@ cron.schedule('0 * * * *', async () => {
     // Create backup file
     const fs = require('fs');
     const path = require('path');
-    const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/repairshop.sqlite');
-    const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
-    const printQueuePath = process.env.PRINT_QUEUE_PATH || path.join(__dirname, '../data/print-queue');
+    const dbPath = process.env.DB_PATH || '/data/repairshop.sqlite';
+    const uploadsPath = process.env.UPLOADS_PATH || '/data/uploads';
+    const printQueuePath = process.env.PRINT_QUEUE_PATH || '/data/print-queue';
     const savePath = schedule.save_path;
 
     if (!fs.existsSync(savePath)) { fs.mkdirSync(savePath, { recursive: true }); }

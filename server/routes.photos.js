@@ -8,7 +8,7 @@ const auth = require('./auth.middleware');
 
 router.use(auth);
 
-const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+const uploadsPath = process.env.UPLOADS_PATH || '/data/uploads';
 const photosPath = path.join(uploadsPath, 'photos');
 if (!fs.existsSync(photosPath)) fs.mkdirSync(photosPath, { recursive: true });
 

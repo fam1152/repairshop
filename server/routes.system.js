@@ -67,7 +67,7 @@ router.get('/logs/stream', isAdmin, (req, res) => {
 
 // System info
 router.get('/info', isAdmin, (req, res) => {
-  const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/repairshop.sqlite');
+  const dbPath = process.env.DB_PATH || '/data/repairshop.sqlite';
   const dbSize = fs.existsSync(dbPath) ? fs.statSync(dbPath).size : 0;
 
   res.json({
@@ -93,8 +93,8 @@ router.post('/reboot', isAdmin, async (req, res) => {
     try {
       // Auto-backup before reboot
       const archiver = require('archiver');
-      const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/repairshop.sqlite');
-      const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+      const dbPath = process.env.DB_PATH || '/data/repairshop.sqlite';
+      const uploadsPath = process.env.UPLOADS_PATH || '/data/uploads';
       const dataDir = path.dirname(dbPath);
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const backupName = `repairshop-PRE-REBOOT-${timestamp}.zip`;
@@ -266,7 +266,7 @@ router.post('/db-optimize', isAdmin, (req, res) => {
 
 // File Browser API
 router.get('/files', isAdmin, (req, res) => {
-  const dataDir = path.join(__dirname, '../data');
+  const dataDir = '/data';
   const subDir = req.query.path || '';
   const targetDir = path.resolve(dataDir, subDir);
 
@@ -297,7 +297,7 @@ router.get('/files', isAdmin, (req, res) => {
 });
 
 router.get('/files/view', isAdmin, (req, res) => {
-  const dataDir = path.join(__dirname, '../data');
+  const dataDir = '/data';
   const filePath = req.query.path;
   if (!filePath) return res.status(400).json({ error: 'Path required' });
   const targetPath = path.resolve(dataDir, filePath);
@@ -318,7 +318,7 @@ router.get('/files/view', isAdmin, (req, res) => {
 });
 
 router.get('/files/download', isAdmin, (req, res) => {
-  const dataDir = path.join(__dirname, '../data');
+  const dataDir = '/data';
   const filePath = req.query.path;
   if (!filePath) return res.status(400).json({ error: 'Path required' });
   const targetPath = path.resolve(dataDir, filePath);

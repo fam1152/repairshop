@@ -8,7 +8,7 @@ const auth = require('./auth.middleware');
 
 router.use(auth);
 
-const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+const uploadsPath = process.env.UPLOADS_PATH || '/data/uploads';
 
 router.get('/', (req, res) => {
   const { customer_id, status } = req.query;

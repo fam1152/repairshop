@@ -4,8 +4,11 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { exec } = require('child_process');
+const multer = require('multer');
 
 router.use(auth);
+
+const upload = multer({ dest: '/tmp/' });
 
 // Get the image name this container is running as
 async function getImageName() {

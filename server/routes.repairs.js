@@ -123,7 +123,7 @@ router.get('/:id/intake-pdf', (req, res) => {
     FROM repairs r JOIN customers c ON r.customer_id=c.id WHERE r.id=?`).get(req.params.id);
   if (!repair) return res.status(404).json({ error: 'Not found' });
   const settings = db.prepare('SELECT * FROM settings WHERE id=1').get();
-  const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+  const uploadsPath = process.env.UPLOADS_PATH || '/data/uploads';
 
   const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
   res.setHeader('Content-Type', 'application/pdf');

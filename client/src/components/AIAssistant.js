@@ -577,9 +577,34 @@ export function AISettings() {
               <div style={{ marginTop: 20, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                   <div style={{ fontWeight: 600, fontSize: 13 }}>Connection Logs</div>
-                  <button className="btn btn-sm btn-outline" onClick={loadStatus} disabled={checking}>
-                    {checking ? 'Connecting...' : 'Connect Now'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className="btn btn-sm btn-outline" onClick={async () => {
+                      if (!window.confirm('Install Ollama on this host?')) return;
+                      setChecking(true);
+                      setConnectLog(prev => [...prev.slice(-9), `> [${new Date().toLocaleTimeString()}] Installing Ollama...`]);
+                      try {
+                        const response = await fetch('/api/ai/install', { method: 'POST', headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` } });
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        while(true) {
+                          const {done, value} = await reader.read();
+                          if (done) break;
+                          const text = decoder.decode(value);
+                          setConnectLog(prev => [...prev.slice(-15), `> ${text.trim()}`]);
+                        }
+                        setConnectLog(prev => [...prev.slice(-15), `> [${new Date().toLocaleTimeString()}] Install complete.`]);
+                      } catch(e) {
+                        setConnectLog(prev => [...prev.slice(-15), `> [${new Date().toLocaleTimeString()}] Install failed: ${e.message}`]);
+                      }
+                      setChecking(false);
+                      loadStatus();
+                    }} disabled={checking}>
+                      Install Ollama
+                    </button>
+                    <button className="btn btn-sm btn-outline" onClick={loadStatus} disabled={checking}>
+                      {checking ? 'Connecting...' : 'Connect Now'}
+                    </button>
+                  </div>
                 </div>
                 <div style={{ background: '#000', color: '#0f0', padding: '10px', borderRadius: 6, fontFamily: 'monospace', fontSize: 11, minHeight: 100, maxHeight: 150, overflowY: 'auto' }}>
                   {connectLog.length === 0 ? '> Idle' : connectLog.map((log, i) => <div key={i}>{log}</div>)}

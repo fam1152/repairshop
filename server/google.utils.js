@@ -131,7 +131,7 @@ async function backupToDrive() {
   try {
     const drive = google.drive({ version: 'v3', auth: client });
     const tokens = getStoredTokens();
-    const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/repairshop.sqlite');
+    const dbPath = process.env.DB_PATH || '/data/repairshop.sqlite';
     
     const archive = archiver('zip', { zlib: { level: 6 } });
     const passThrough = new PassThrough();

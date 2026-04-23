@@ -3,9 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 // Determine database path
-const defaultDbPath = path.join(__dirname, '../data/repairshop.sqlite');
-
-const dbPath = process.env.DB_PATH || defaultDbPath;
+const dbPath = process.env.DB_PATH || '/data/repairshop.sqlite';
 const dbDir = path.dirname(dbPath);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 

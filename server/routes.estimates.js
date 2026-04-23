@@ -8,7 +8,7 @@ const auth = require('./auth.middleware');
 
 router.use(auth);
 
-const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
+const uploadsPath = process.env.UPLOADS_PATH || '/data/uploads';
 
 function nextEstimateNumber() {
   const last = db.prepare("SELECT estimate_number FROM estimates ORDER BY created_at DESC LIMIT 1").get();

@@ -9,8 +9,8 @@ const auth = require('./auth.middleware');
 
 router.use(auth);
 
-const uploadsPath = process.env.UPLOADS_PATH || path.join(__dirname, '../data/uploads');
-const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/repairshop.sqlite');
+const uploadsPath = process.env.UPLOADS_PATH || '/data/uploads';
+const dbPath = process.env.DB_PATH || '/data/repairshop.sqlite';
 const dataDir = path.dirname(dbPath);
 const tempDir = path.join(dataDir, 'temp');
 if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
@@ -35,7 +35,7 @@ router.get('/download', async (req, res) => {
         archive.file(dbPath, { name: 'repairshop.sqlite' });
       }
       if (fs.existsSync(uploadsPath)) archive.directory(uploadsPath, 'uploads');
-      const printQueuePath = process.env.PRINT_QUEUE_PATH || path.join(__dirname, '../data/print-queue');
+      const printQueuePath = process.env.PRINT_QUEUE_PATH || '/data/print-queue';
       if (fs.existsSync(printQueuePath)) archive.directory(printQueuePath, 'print-queue');
       
       await archive.finalize();
@@ -70,7 +70,7 @@ router.get('/download', async (req, res) => {
   }
 
   // Add print queue directory
-  const printQueuePath = process.env.PRINT_QUEUE_PATH || path.join(__dirname, '../data/print-queue');
+  const printQueuePath = process.env.PRINT_QUEUE_PATH || '/data/print-queue';
   if (fs.existsSync(printQueuePath)) {
     archive.directory(printQueuePath, 'print-queue');
   }
@@ -236,7 +236,7 @@ router.post('/drive', async (req, res) => {
     // Create backup zip in memory
     const archiver = require('archiver');
     const { PassThrough } = require('stream');
-    const dbPath = process.env.DB_PATH || path.join(__dirname, '../data/repairshop.sqlite');
+    const dbPath = process.env.DB_PATH || '/data/repairshop.sqlite';
     const archive = archiver('zip', { zlib: { level: 6 } });
     const passThrough = new PassThrough();
     archive.pipe(passThrough);

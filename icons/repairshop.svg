@@ -1,0 +1,27 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b82f6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1d4ed8;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="url(#grad)"/>
+  
+  <!-- Circuit board patterns -->
+  <path d="M120 120 L200 120 M120 160 L250 160 M392 392 L312 392 M392 352 L262 352" stroke="#60a5fa" stroke-width="8" stroke-linecap="round" opacity="0.4"/>
+  <circle cx="200" cy="120" r="8" fill="#60a5fa" opacity="0.4"/>
+  <circle cx="250" cy="160" r="8" fill="#60a5fa" opacity="0.4"/>
+  <circle cx="312" cy="392" r="8" fill="#60a5fa" opacity="0.4"/>
+  <circle cx="262" cy="352" r="8" fill="#60a5fa" opacity="0.4"/>
+
+  <!-- Wrench / Tech Tool -->
+  <g transform="translate(128, 128) scale(0.5)">
+    <path d="M440.08 341.31c-1.66-2-3.29-4-4.89-6.06-25.11-32-34-72-27.12-111.49 13.05-75.14 74.07-132.83 150.31-135.47 11.23-.39 21.6 4.3 29.35 12.05s12.44 18.12 12.05 29.35c-2.64 76.24-60.33 137.26-135.47 150.31-39.51 6.84-79.5-2-111.49-27.12-2.05-1.6-4.06-3.23-6.06-4.89l-117.6 117.61a48 48 0 0 1-67.88 0l-12-12a48 48 0 0 1 0-67.88z" fill="white"/>
+    <path d="M211.2 51.2a160 160 0 0 0-160 160c0 34.3 10.9 66 29.4 92l-51.4 51.4a48 48 0 0 0 0 67.9l12.1 12.1a48 48 0 0 0 67.9 0l51.4-51.4a159.3 159.3 0 0 0 210.6-210.6l-51.4 51.4-67.9-67.9 51.4-51.4A159.2 159.2 0 0 0 211.2 51.2z" fill="white" opacity="0.2"/>
+  </g>
+
+  <!-- Monitor / Screen Overlay -->
+  <rect x="156" y="156" width="200" height="160" rx="20" fill="none" stroke="white" stroke-width="24"/>
+  <path d="M226 316 L206 360 L306 360 L286 316" fill="white"/>
+  <rect x="180" y="180" width="152" height="112" rx="8" fill="white" opacity="0.2"/>
+</svg>
